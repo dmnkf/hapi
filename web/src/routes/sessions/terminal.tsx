@@ -320,6 +320,21 @@ export default function TerminalPage() {
         }
     }, [terminalState.status])
 
+    const handleReconnect = useCallback(() => {
+        const size = lastSizeRef.current
+        if (!size || !session?.active || !terminalSupported) {
+            return
+        }
+        disconnect()
+        connectOnceRef.current = false
+        setExitInfo(null)
+        // Small delay to let the socket fully tear down
+        setTimeout(() => {
+            connectOnceRef.current = true
+            connect(size.cols, size.rows)
+        }, 200)
+    }, [session?.active, terminalSupported, disconnect, connect])
+
     const quickInputDisabled = !session?.active || terminalState.status !== 'connected'
     const writePlainInput = useCallback((text: string) => {
         if (!text || quickInputDisabled) {
@@ -402,6 +417,7 @@ export default function TerminalPage() {
 
     const subtitle = session.metadata?.path ?? sessionId
     const status = terminalState.status
+    const canReconnect = session.active && terminalSupported && (status === 'error' || status === 'idle' || exitInfo !== null)
     const errorMessage = !terminalSupported
         ? t('terminal.unsupportedWindows')
         : terminalState.status === 'error'
@@ -438,7 +454,16 @@ export default function TerminalPage() {
             {errorMessage ? (
                 <div className="mx-auto w-full max-w-content px-3 pt-3">
                     <div className="rounded-md border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] p-3 text-xs text-[var(--app-badge-error-text)]">
-                        {errorMessage}
+                        <div>{errorMessage}</div>
+                        {canReconnect ? (
+                            <button
+                                type="button"
+                                onClick={handleReconnect}
+                                className="mt-2 rounded-md bg-[var(--app-button)] px-3 py-1.5 text-xs font-medium text-[var(--app-button-text)] transition-colors hover:opacity-90"
+                            >
+                                Reconnect
+                            </button>
+                        ) : null}
                     </div>
                 </div>
             ) : null}
@@ -446,8 +471,19 @@ export default function TerminalPage() {
             {exitInfo ? (
                 <div className="mx-auto w-full max-w-content px-3 pt-3">
                     <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-3 text-xs text-[var(--app-hint)]">
-                        Terminal exited{exitInfo.code !== null ? ` with code ${exitInfo.code}` : ''}
-                        {exitInfo.signal ? ` (${exitInfo.signal})` : ''}.
+                        <div>
+                            Terminal exited{exitInfo.code !== null ? ` with code ${exitInfo.code}` : ''}
+                            {exitInfo.signal ? ` (${exitInfo.signal})` : ''}.
+                        </div>
+                        {canReconnect ? (
+                            <button
+                                type="button"
+                                onClick={handleReconnect}
+                                className="mt-2 rounded-md bg-[var(--app-button)] px-3 py-1.5 text-xs font-medium text-[var(--app-button-text)] transition-colors hover:opacity-90"
+                            >
+                                Reconnect
+                            </button>
+                        ) : null}
                     </div>
                 </div>
             ) : null}

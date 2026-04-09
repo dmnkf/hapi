@@ -8,6 +8,7 @@ import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { getSessionModelLabel } from '@/lib/sessionModelLabel'
 import { useTranslation } from '@/lib/use-translation'
+import { isRemoteTerminalSupported } from '@/utils/terminalSupport'
 
 function getSessionTitle(session: Session): string {
     if (session.metadata?.name) {
@@ -43,6 +44,26 @@ function FilesIcon(props: { className?: string }) {
     )
 }
 
+function TerminalIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <polyline points="4 17 10 11 4 5" />
+            <line x1="12" y1="19" x2="20" y2="19" />
+        </svg>
+    )
+}
+
 function MoreVerticalIcon(props: { className?: string }) {
     return (
         <svg
@@ -64,6 +85,7 @@ export function SessionHeader(props: {
     session: Session
     onBack: () => void
     onViewFiles?: () => void
+    onViewTerminal?: () => void
     api: ApiClient | null
     onSessionDeleted?: () => void
 }) {
@@ -150,6 +172,17 @@ export function SessionHeader(props: {
                             ) : null}
                         </div>
                     </div>
+
+                    {props.onViewTerminal ? (
+                        <button
+                            type="button"
+                            onClick={props.onViewTerminal}
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            title={t('composer.terminal')}
+                        >
+                            <TerminalIcon />
+                        </button>
+                    ) : null}
 
                     {props.onViewFiles ? (
                         <button
