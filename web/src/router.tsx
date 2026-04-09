@@ -152,10 +152,8 @@ function SessionsPage() {
 
     return (
         <div className="flex h-full min-h-0">
-            <div
-                className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} w-full lg:w-[420px] xl:w-[480px] shrink-0 flex-col bg-[var(--app-bg)] lg:border-r lg:border-[var(--app-divider)]`}
-            >
-                <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
+            <div className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} w-full lg:w-[340px] xl:w-[380px] shrink-0 flex-col bg-[var(--app-bg)] lg:border-r lg:border-[var(--app-divider)]`}>
+                <div className="glass-bar sticky top-0 z-20 border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
                     <div className="mx-auto w-full max-w-content px-3 py-2">
                         <div className="flex items-center justify-between">
                             <div className="text-xs text-[var(--app-hint)]">
@@ -433,7 +431,7 @@ function SwipeBackIndicator({ offset, progress }: { offset: number; progress: nu
                 style={{
                     width: `${Math.min(offset, 80)}px`,
                     opacity: progress,
-                    transition: offset === 0 ? 'all 0.2s ease-out' : 'none',
+                    transition: offset === 0 ? 'all 150ms ease-out' : 'none',
                 }}
             />
             <div
@@ -441,7 +439,7 @@ function SwipeBackIndicator({ offset, progress }: { offset: number; progress: nu
                 style={{
                     left: `${Math.min(offset - 24, 56)}px`,
                     opacity: progress,
-                    transition: offset === 0 ? 'all 0.2s ease-out' : 'none',
+                    transition: offset === 0 ? 'all 150ms ease-out' : 'none',
                 }}
             >
                 <svg
@@ -455,7 +453,7 @@ function SwipeBackIndicator({ offset, progress }: { offset: number; progress: nu
                     strokeLinejoin="round"
                     style={{
                         transform: `scale(${0.6 + progress * 0.4})`,
-                        transition: offset === 0 ? 'transform 0.2s ease-out' : 'none',
+                        transition: offset === 0 ? 'transform 150ms ease-out' : 'none',
                     }}
                 >
                     <polyline points="15 18 9 12 15 6" />
@@ -518,12 +516,12 @@ function NewSessionPage() {
 
     return (
         <div className="flex h-full min-h-0 flex-col">
-            <div className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+            <div className="glass-bar sticky top-0 z-30 flex items-center gap-2 border-b border-[var(--app-divider)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
                 {!isTelegramApp() && (
                     <button
                         type="button"
                         onClick={goBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                        className="flex h-11 w-11 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                     >
                         <BackIcon />
                     </button>

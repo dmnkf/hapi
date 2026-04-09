@@ -34,8 +34,8 @@ export function ReconnectingBanner({
     }
 
     return (
-        <div className="fixed top-0 left-0 right-0 bg-amber-500 text-white text-center py-2 text-sm font-medium z-50 flex items-center justify-center gap-2">
-            <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+        <div className="glass-bar fixed top-0 left-0 right-0 text-[var(--app-badge-warning-text)] text-center py-2 text-sm font-medium z-50 flex items-center justify-center gap-2 border-b border-[var(--app-badge-warning-border)]">
+            <span className="animate-spin h-4 w-4 border-2 border-[var(--app-badge-warning-text)] border-t-transparent rounded-full" />
             {t('reconnecting.message')}
             {reasonLabel ? <span className="opacity-90">({reasonLabel})</span> : null}
         </div>

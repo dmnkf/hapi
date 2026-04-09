@@ -3,6 +3,7 @@
 
 :root {
     --app-bg: var(--tg-theme-bg-color, #ffffff);
+    --app-bg-rgb: 255, 255, 255;
     --app-fg: var(--tg-theme-text-color, #111827);
     --app-hint: var(--tg-theme-hint-color, #6b7280);
     --app-link: var(--tg-theme-link-color, #111827);
@@ -52,6 +53,7 @@
 [data-theme="dark"] {
     /* Primary colors - override fallbacks for non-Telegram browsers */
     --app-bg: var(--tg-theme-bg-color, #1c1c1e);
+    --app-bg-rgb: 28, 28, 30;
     --app-fg: var(--tg-theme-text-color, #ffffff);
     --app-hint: var(--tg-theme-hint-color, #8e8e93);
     --app-link: var(--tg-theme-link-color, #ffffff);
@@ -248,7 +250,7 @@ html[data-theme="dark"] .shiki span {
 }
 
 .animate-slide-up {
-  animation: slide-up 0.3s ease-out;
+  animation: slide-up 0.18s ease-out;
 }
 
 @keyframes menu-pop {
@@ -296,7 +298,26 @@ html[data-theme="dark"] .shiki span {
 }
 
 .animate-bounce-in {
-  animation: bounce-in 0.3s ease-out;
+  animation: bounce-in 0.18s ease-out;
+}
+
+/* Glass material -- translucent bar with backdrop blur */
+.glass-bar {
+    background-color: rgba(var(--app-bg-rgb), 0.72);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+}
+
+[data-theme="dark"] .glass-bar {
+    background-color: rgba(var(--app-bg-rgb), 0.78);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .glass-bar {
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        background-color: var(--app-bg);
+    }
 }
 
 /* Skeleton loading shimmer */
@@ -321,7 +342,7 @@ html[data-theme="dark"] .shiki span {
 .session-group-content {
   display: grid;
   grid-template-rows: 1fr;
-  transition: grid-template-rows 0.25s ease-out, opacity 0.2s ease-out;
+  transition: grid-template-rows 150ms ease-out, opacity 150ms ease-out;
   opacity: 1;
 }
 
@@ -337,6 +358,37 @@ html[data-theme="dark"] .shiki span {
 
 /* ReactQueryDevtools button - move to middle-right to avoid blocking UI */
 .tsqd-open-btn-container {
-  bottom: 50% !important;
-  transform: translateY(50%);
+    bottom: 50% !important;
+    transform: translateY(50%);
+}
+
+/* View Transitions API -- horizontal slide between routes */
+@media (prefers-reduced-motion: no-preference) {
+    ::view-transition-old(root) {
+        animation: slide-out-left 150ms ease-in both;
+    }
+    ::view-transition-new(root) {
+        animation: slide-in-right 150ms ease-out both;
+    }
+
+    /* Reverse direction for back navigation */
+    .vt-back::view-transition-old(root) {
+        animation: slide-out-right 150ms ease-in both;
+    }
+    .vt-back::view-transition-new(root) {
+        animation: slide-in-left 150ms ease-out both;
+    }
+}
+
+@keyframes slide-out-left {
+    to { transform: translateX(-25%); opacity: 0; }
+}
+@keyframes slide-in-right {
+    from { transform: translateX(25%); opacity: 0; }
+}
+@keyframes slide-out-right {
+    to { transform: translateX(25%); opacity: 0; }
+}
+@keyframes slide-in-left {
+    from { transform: translateX(-25%); opacity: 0; }
 }

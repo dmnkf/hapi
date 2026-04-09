@@ -94,7 +94,7 @@ export function SessionTabBar() {
 
     return (
         <nav
-            className="lg:hidden shrink-0 border-t border-[var(--app-border)] bg-[var(--app-bg)]"
+            className="lg:hidden shrink-0 glass-bar mx-3 mb-2 rounded-2xl border border-[var(--app-divider)]"
             style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         >
             <div className="flex items-center justify-around h-[52px]">
