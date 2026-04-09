@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionSummary } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { useLongPress } from '@/hooks/useLongPress'
@@ -352,6 +352,140 @@ function FilterBar(props: {
     )
 }
 
+// --- Swipe Hook ---
+
+const SWIPE_THRESHOLD = 50
+const SWIPE_ACTION_WIDTH = 140
+
+function useSwipeReveal() {
+    const containerRef = useRef<HTMLDivElement>(null)
+    const startXRef = useRef(0)
+    const startYRef = useRef(0)
+    const currentOffsetRef = useRef(0)
+    const isSwipingRef = useRef(false)
+    const [offset, setOffset] = useState(0)
+    const [revealed, setRevealed] = useState(false)
+
+    const resetSwipe = useCallback(() => {
+        setOffset(0)
+        setRevealed(false)
+        currentOffsetRef.current = 0
+    }, [])
+
+    const handleTouchStart = useCallback((e: React.TouchEvent) => {
+        const touch = e.touches[0]
+        startXRef.current = touch.clientX
+        startYRef.current = touch.clientY
+        isSwipingRef.current = false
+    }, [])
+
+    const handleTouchMove = useCallback((e: React.TouchEvent) => {
+        const touch = e.touches[0]
+        const dx = touch.clientX - startXRef.current
+        const dy = touch.clientY - startYRef.current
+
+        // If vertical movement is dominant, don't swipe
+        if (!isSwipingRef.current && Math.abs(dy) > Math.abs(dx)) return
+
+        const base = revealed ? -SWIPE_ACTION_WIDTH : 0
+        const raw = base + dx
+        // Clamp: can't swipe right past 0, max left is action width + small overshoot
+        const clamped = Math.max(-(SWIPE_ACTION_WIDTH + 20), Math.min(0, raw))
+
+        if (Math.abs(dx) > 10) {
+            isSwipingRef.current = true
+        }
+
+        if (isSwipingRef.current) {
+            setOffset(clamped)
+            currentOffsetRef.current = clamped
+        }
+    }, [revealed])
+
+    const handleTouchEnd = useCallback(() => {
+        if (!isSwipingRef.current) return
+
+        const finalOffset = currentOffsetRef.current
+
+        if (revealed) {
+            // Already revealed: if swiped back past half, close
+            if (finalOffset > -SWIPE_THRESHOLD) {
+                resetSwipe()
+            } else {
+                setOffset(-SWIPE_ACTION_WIDTH)
+                currentOffsetRef.current = -SWIPE_ACTION_WIDTH
+            }
+        } else {
+            // Not revealed: if swiped past threshold, reveal
+            if (finalOffset < -SWIPE_THRESHOLD) {
+                setOffset(-SWIPE_ACTION_WIDTH)
+                currentOffsetRef.current = -SWIPE_ACTION_WIDTH
+                setRevealed(true)
+            } else {
+                resetSwipe()
+            }
+        }
+
+        isSwipingRef.current = false
+    }, [revealed, resetSwipe])
+
+    return {
+        containerRef,
+        offset,
+        revealed,
+        resetSwipe,
+        isSwipingRef,
+        handlers: {
+            onTouchStart: handleTouchStart,
+            onTouchMove: handleTouchMove,
+            onTouchEnd: handleTouchEnd,
+        },
+    }
+}
+
+// --- Swipe Action Icons ---
+
+function ArchiveIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <rect x="2" y="3" width="20" height="5" rx="1" />
+            <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+            <path d="M10 12h4" />
+        </svg>
+    )
+}
+
+function TrashIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        </svg>
+    )
+}
+
 // --- Session Item ---
 
 function SessionItem(props: {
@@ -376,13 +510,21 @@ function SessionItem(props: {
         s.metadata?.flavor ?? null
     )
 
+    const swipe = useSwipeReveal()
+
     const longPressHandlers = useLongPress({
         onLongPress: (point) => {
+            if (swipe.isSwipingRef.current) return
             haptic.impact('medium')
             setMenuAnchorPoint(point)
             setMenuOpen(true)
         },
         onClick: () => {
+            if (swipe.isSwipingRef.current) return
+            if (swipe.revealed) {
+                swipe.resetSwipe()
+                return
+            }
             if (!menuOpen) {
                 onSelect(s.id)
             }
@@ -400,85 +542,125 @@ function SessionItem(props: {
 
     return (
         <>
-            <button
-                type="button"
-                {...longPressHandlers}
-                className={`session-list-item flex w-full flex-col gap-1 px-3 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none ${selected ? 'bg-[var(--app-secondary-bg)] ring-1 ring-inset ring-[var(--app-border)]' : ''}`}
-                style={{ WebkitTouchCallout: 'none' }}
-                aria-current={selected ? 'page' : undefined}
+            <div
+                ref={swipe.containerRef}
+                className="relative overflow-hidden"
+                {...swipe.handlers}
             >
-                {/* Row 1: agent badge + title + right-side indicators */}
-                <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                        <span
-                            className="flex h-5 shrink-0 items-center gap-1.5 rounded-full px-1.5 text-[10px] font-semibold leading-none text-white"
-                            style={{ backgroundColor: agentColor }}
-                            title={agentLabel}
-                        >
+                {/* Swipe action buttons (behind the card) */}
+                <div
+                    className="absolute inset-y-0 right-0 flex"
+                    style={{ width: SWIPE_ACTION_WIDTH }}
+                >
+                    <button
+                        type="button"
+                        onClick={() => {
+                            swipe.resetSwipe()
+                            setArchiveOpen(true)
+                        }}
+                        className="flex flex-1 flex-col items-center justify-center gap-1 bg-[var(--app-badge-warning-text)] text-white text-[11px] font-medium"
+                    >
+                        <ArchiveIcon />
+                        {t('session.action.archive')}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            swipe.resetSwipe()
+                            setDeleteOpen(true)
+                        }}
+                        className="flex flex-1 flex-col items-center justify-center gap-1 bg-red-500 text-white text-[11px] font-medium"
+                    >
+                        <TrashIcon />
+                        {t('session.action.delete')}
+                    </button>
+                </div>
+
+                {/* Sliding foreground card */}
+                <button
+                    type="button"
+                    {...longPressHandlers}
+                    className={`session-list-item relative z-[1] flex w-full flex-col gap-1 px-3 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none bg-[var(--app-bg)] ${selected ? 'bg-[var(--app-secondary-bg)] ring-1 ring-inset ring-[var(--app-border)]' : ''}`}
+                    style={{
+                        WebkitTouchCallout: 'none',
+                        transform: `translateX(${swipe.offset}px)`,
+                        transition: swipe.offset === 0 || swipe.offset === -SWIPE_ACTION_WIDTH ? 'transform 0.25s ease-out' : 'none',
+                    }}
+                    aria-current={selected ? 'page' : undefined}
+                >
+                    {/* Row 1: agent badge + title + right-side indicators */}
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
                             <span
-                                className={`h-1.5 w-1.5 rounded-full ${s.active ? 'bg-white' : 'bg-white/50'}`}
-                            />
-                            {agentLabel.length <= 10 ? agentLabel : null}
-                        </span>
-                        <span className="truncate text-sm font-medium">
-                            {sessionName}
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0 text-xs">
-                        {s.thinking ? (
-                            <span className="text-[#007AFF] animate-pulse font-medium">
-                                {t('session.item.thinking')}
+                                className="flex h-5 shrink-0 items-center gap-1.5 rounded-full px-1.5 text-[10px] font-semibold leading-none text-white"
+                                style={{ backgroundColor: agentColor }}
+                                title={agentLabel}
+                            >
+                                <span
+                                    className={`h-1.5 w-1.5 rounded-full ${s.active ? 'bg-white' : 'bg-white/50'}`}
+                                />
+                                {agentLabel.length <= 10 ? agentLabel : null}
                             </span>
-                        ) : null}
-                        {s.pendingRequestsCount > 0 ? (
-                            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--app-badge-warning-text)] px-1.5 text-[10px] font-bold leading-none text-white">
-                                {s.pendingRequestsCount}
+                            <span className="truncate text-sm font-medium">
+                                {sessionName}
                             </span>
-                        ) : null}
-                        <span className="text-[var(--app-hint)]">
-                            {formatRelativeTime(s.updatedAt, t)}
-                        </span>
-                    </div>
-                </div>
-
-                {/* Row 2: subtitle (summary or model) */}
-                {subtitle ? (
-                    <div className="truncate pl-8 text-xs text-[var(--app-hint)]">
-                        {subtitle}
-                    </div>
-                ) : null}
-
-                {/* Row 3: inline todo progress bar */}
-                {todoProgress ? (
-                    <div className="flex items-center gap-2 pl-8">
-                        <div className="h-1 flex-1 overflow-hidden rounded-full bg-[var(--app-subtle-bg)]">
-                            <div
-                                className="h-full rounded-full bg-[#007AFF] transition-all duration-300"
-                                style={{ width: `${todoPercent}%` }}
-                            />
                         </div>
-                        <span className="flex items-center gap-1 shrink-0 text-[10px] text-[var(--app-hint)]">
-                            <BulbIcon className="h-3 w-3" />
-                            {todoProgress.completed}/{todoProgress.total}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0 text-xs">
+                            {s.thinking ? (
+                                <span className="text-[#007AFF] animate-pulse font-medium">
+                                    {t('session.item.thinking')}
+                                </span>
+                            ) : null}
+                            {s.pendingRequestsCount > 0 ? (
+                                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--app-badge-warning-text)] px-1.5 text-[10px] font-bold leading-none text-white">
+                                    {s.pendingRequestsCount}
+                                </span>
+                            ) : null}
+                            <span className="text-[var(--app-hint)]">
+                                {formatRelativeTime(s.updatedAt, t)}
+                            </span>
+                        </div>
                     </div>
-                ) : null}
 
-                {/* Row 4: metadata chips */}
-                {showPath ? (
-                    <div className="truncate pl-8 text-xs text-[var(--app-hint)]">
-                        {s.metadata?.path ?? s.id}
+                    {/* Row 2: subtitle (summary or model) */}
+                    {subtitle ? (
+                        <div className="truncate pl-8 text-xs text-[var(--app-hint)]">
+                            {subtitle}
+                        </div>
+                    ) : null}
+
+                    {/* Row 3: inline todo progress bar */}
+                    {todoProgress ? (
+                        <div className="flex items-center gap-2 pl-8">
+                            <div className="h-1 flex-1 overflow-hidden rounded-full bg-[var(--app-subtle-bg)]">
+                                <div
+                                    className="h-full rounded-full bg-[#007AFF] transition-all duration-300"
+                                    style={{ width: `${todoPercent}%` }}
+                                />
+                            </div>
+                            <span className="flex items-center gap-1 shrink-0 text-[10px] text-[var(--app-hint)]">
+                                <BulbIcon className="h-3 w-3" />
+                                {todoProgress.completed}/{todoProgress.total}
+                            </span>
+                        </div>
+                    ) : null}
+
+                    {/* Row 4: metadata chips */}
+                    {showPath ? (
+                        <div className="truncate pl-8 text-xs text-[var(--app-hint)]">
+                            {s.metadata?.path ?? s.id}
+                        </div>
+                    ) : null}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-8 text-xs text-[var(--app-hint)]">
+                        {modelLabel ? (
+                            <span>{t(modelLabel.key)}: {modelLabel.value}</span>
+                        ) : null}
+                        {s.metadata?.worktree?.branch ? (
+                            <span>{t('session.item.worktree')}: {s.metadata.worktree.branch}</span>
+                        ) : null}
                     </div>
-                ) : null}
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-8 text-xs text-[var(--app-hint)]">
-                    {modelLabel ? (
-                        <span>{t(modelLabel.key)}: {modelLabel.value}</span>
-                    ) : null}
-                    {s.metadata?.worktree?.branch ? (
-                        <span>{t('session.item.worktree')}: {s.metadata.worktree.branch}</span>
-                    ) : null}
-                </div>
-            </button>
+                </button>
+            </div>
 
             <SessionActionMenu
                 isOpen={menuOpen}
