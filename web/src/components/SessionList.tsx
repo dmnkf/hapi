@@ -14,18 +14,34 @@ type SessionGroup = {
     key: string
     directory: string
     displayName: string
+    pathSubtitle: string
     machineId: string | null
     sessions: SessionSummary[]
     latestUpdatedAt: number
     hasActiveSession: boolean
 }
 
-function getGroupDisplayName(directory: string): string {
-    if (directory === 'Other') return directory
+type StatusFilter = 'all' | 'active' | 'pending' | 'inactive'
+
+const FILTER_STORAGE_KEY = 'hapi:sessionFilter'
+
+const COMMON_LEAF_DIRS = new Set([
+    'src', 'app', 'lib', 'bin', 'cmd', 'pkg', 'dist', 'build', 'out',
+    'test', 'tests', 'spec', 'docs', 'scripts', 'config', 'public',
+    'assets', 'static', 'resources', 'internal', 'packages', 'modules',
+])
+
+function getGroupDisplayName(directory: string): { name: string; subtitle: string } {
+    if (directory === 'Other') return { name: directory, subtitle: '' }
     const parts = directory.split(/[\\/]+/).filter(Boolean)
-    if (parts.length === 0) return directory
-    if (parts.length === 1) return parts[0]
-    return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`
+    if (parts.length === 0) return { name: directory, subtitle: directory }
+    if (parts.length === 1) return { name: parts[0], subtitle: directory }
+
+    const last = parts[parts.length - 1]
+    if (COMMON_LEAF_DIRS.has(last.toLowerCase()) && parts.length >= 2) {
+        return { name: parts[parts.length - 2], subtitle: directory }
+    }
+    return { name: last, subtitle: directory }
 }
 
 export const UNKNOWN_MACHINE_ID = '__unknown__'
@@ -60,12 +76,13 @@ function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
                 -Infinity
             )
             const hasActiveSession = group.sessions.some(s => s.active)
-            const displayName = getGroupDisplayName(group.directory)
+            const { name, subtitle } = getGroupDisplayName(group.directory)
 
             return {
                 key,
                 directory: group.directory,
-                displayName,
+                displayName: name,
+                pathSubtitle: subtitle,
                 machineId: group.machineId,
                 sessions: sortedSessions,
                 latestUpdatedAt,
@@ -79,6 +96,8 @@ function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
             return b.latestUpdatedAt - a.latestUpdatedAt
         })
 }
+
+// --- Icons ---
 
 function PlusIcon(props: { className?: string }) {
     return (
@@ -140,30 +159,24 @@ function ChevronIcon(props: { className?: string; collapsed?: boolean }) {
     )
 }
 
-function getSessionTitle(session: SessionSummary): string {
-    if (session.metadata?.name) {
-        return session.metadata.name
-    }
-    if (session.metadata?.summary?.text) {
-        return session.metadata.summary.text
-    }
-    if (session.metadata?.path) {
-        const parts = session.metadata.path.split('/').filter(Boolean)
-        return parts.length > 0 ? parts[parts.length - 1] : session.id.slice(0, 8)
-    }
-    return session.id.slice(0, 8)
-}
-
-function getTodoProgress(session: SessionSummary): { completed: number; total: number } | null {
-    if (!session.todoProgress) return null
-    if (session.todoProgress.completed === session.todoProgress.total) return null
-    return session.todoProgress
-}
-
-function getAgentLabel(session: SessionSummary): string {
-    const flavor = session.metadata?.flavor?.trim()
-    if (flavor) return flavor
-    return 'unknown'
+function SearchIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+    )
 }
 
 function MachineIcon(props: { className?: string }) {
@@ -187,6 +200,58 @@ function MachineIcon(props: { className?: string }) {
     )
 }
 
+// --- Helpers ---
+
+function getSessionTitle(session: SessionSummary): string {
+    if (session.metadata?.name) {
+        return session.metadata.name
+    }
+    if (session.metadata?.summary?.text) {
+        return session.metadata.summary.text
+    }
+    if (session.metadata?.path) {
+        const parts = session.metadata.path.split('/').filter(Boolean)
+        return parts.length > 0 ? parts[parts.length - 1] : session.id.slice(0, 8)
+    }
+    return session.id.slice(0, 8)
+}
+
+function getSessionSubtitle(session: SessionSummary, title: string): string | null {
+    const summary = session.metadata?.summary?.text
+    if (summary && summary !== title) return summary
+    const modelLabel = getSessionModelLabel(session)
+    if (modelLabel) return modelLabel.value
+    return null
+}
+
+function getTodoProgress(session: SessionSummary): { completed: number; total: number } | null {
+    if (!session.todoProgress) return null
+    if (session.todoProgress.completed === session.todoProgress.total) return null
+    return session.todoProgress
+}
+
+function getAgentLabel(session: SessionSummary): string {
+    const flavor = session.metadata?.flavor?.trim()
+    if (flavor) return flavor
+    return 'unknown'
+}
+
+const AGENT_COLORS: Record<string, string> = {
+    claude: '#a855f7',
+    codex: '#22c55e',
+    gemini: '#3b82f6',
+    cursor: '#f97316',
+    opencode: '#6b7280',
+}
+
+function getAgentColor(session: SessionSummary): string {
+    const label = getAgentLabel(session).toLowerCase()
+    for (const [agent, color] of Object.entries(AGENT_COLORS)) {
+        if (label.includes(agent)) return color
+    }
+    return '#6b7280'
+}
+
 function formatRelativeTime(value: number, t: (key: string, params?: Record<string, string | number>) => string): string | null {
     const ms = value < 1_000_000_000_000 ? value * 1000 : value
     if (!Number.isFinite(ms)) return null
@@ -200,6 +265,94 @@ function formatRelativeTime(value: number, t: (key: string, params?: Record<stri
     if (days < 7) return t('session.time.daysAgo', { n: days })
     return new Date(ms).toLocaleDateString()
 }
+
+function matchesSearch(session: SessionSummary, query: string): boolean {
+    const q = query.toLowerCase()
+    const fields = [
+        session.metadata?.name,
+        session.metadata?.summary?.text,
+        session.metadata?.path,
+        session.metadata?.flavor,
+        session.model,
+    ]
+    return fields.some(f => f && f.toLowerCase().includes(q))
+}
+
+function matchesFilter(session: SessionSummary, filter: StatusFilter): boolean {
+    switch (filter) {
+        case 'all': return true
+        case 'active': return session.active
+        case 'pending': return session.pendingRequestsCount > 0
+        case 'inactive': return !session.active
+    }
+}
+
+function loadSavedFilter(): StatusFilter {
+    try {
+        const stored = localStorage.getItem(FILTER_STORAGE_KEY)
+        if (stored === 'active' || stored === 'pending' || stored === 'inactive' || stored === 'all') {
+            return stored
+        }
+    } catch { /* ignore */ }
+    return 'all'
+}
+
+// --- Filter Bar ---
+
+function FilterBar(props: {
+    sessions: SessionSummary[]
+    filter: StatusFilter
+    onFilterChange: (f: StatusFilter) => void
+}) {
+    const { sessions, filter, onFilterChange } = props
+    const { t } = useTranslation()
+
+    const counts = useMemo(() => ({
+        all: sessions.length,
+        active: sessions.filter(s => s.active).length,
+        pending: sessions.filter(s => s.pendingRequestsCount > 0).length,
+        inactive: sessions.filter(s => !s.active).length,
+    }), [sessions])
+
+    const chips: { key: StatusFilter; label: string }[] = [
+        { key: 'all', label: t('sessions.filter.all') },
+        { key: 'active', label: t('sessions.filter.active') },
+        { key: 'pending', label: t('sessions.filter.pending') },
+        { key: 'inactive', label: t('sessions.filter.inactive') },
+    ]
+
+    return (
+        <div className="flex gap-2 overflow-x-auto px-3 py-2 scrollbar-none">
+            {chips.map(chip => {
+                const isSelected = filter === chip.key
+                const count = counts[chip.key]
+                return (
+                    <button
+                        key={chip.key}
+                        type="button"
+                        onClick={() => onFilterChange(chip.key)}
+                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                            isSelected
+                                ? 'bg-[var(--app-fg)] text-[var(--app-bg)]'
+                                : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                        }`}
+                    >
+                        {chip.label}
+                        <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold leading-none ${
+                            isSelected
+                                ? 'bg-[var(--app-bg)] text-[var(--app-fg)]'
+                                : 'bg-[var(--app-border)] text-[var(--app-hint)]'
+                        }`}>
+                            {count}
+                        </span>
+                    </button>
+                )
+            })}
+        </div>
+    )
+}
+
+// --- Session Item ---
 
 function SessionItem(props: {
     session: SessionSummary
@@ -238,46 +391,48 @@ function SessionItem(props: {
     })
 
     const sessionName = getSessionTitle(s)
+    const subtitle = getSessionSubtitle(s, sessionName)
     const modelLabel = getSessionModelLabel(s)
-    const statusDotClass = s.active
-        ? (s.thinking ? 'bg-[#007AFF]' : 'bg-[var(--app-badge-success-text)]')
-        : 'bg-[var(--app-hint)]'
+    const agentColor = getAgentColor(s)
+    const agentLabel = getAgentLabel(s)
     const todoProgress = getTodoProgress(s)
+    const todoPercent = todoProgress ? Math.round((todoProgress.completed / todoProgress.total) * 100) : 0
+
     return (
         <>
             <button
                 type="button"
                 {...longPressHandlers}
-                className={`session-list-item flex w-full flex-col gap-1.5 px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none ${selected ? 'bg-[var(--app-secondary-bg)]' : ''}`}
+                className={`session-list-item flex w-full flex-col gap-1 px-3 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none ${selected ? 'bg-[var(--app-secondary-bg)] ring-1 ring-inset ring-[var(--app-border)]' : ''}`}
                 style={{ WebkitTouchCallout: 'none' }}
                 aria-current={selected ? 'page' : undefined}
             >
+                {/* Row 1: agent badge + title + right-side indicators */}
                 <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 min-w-0">
-                        <span className="flex h-4 w-4 items-center justify-center" aria-hidden="true">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                        <span
+                            className="flex h-5 shrink-0 items-center gap-1.5 rounded-full px-1.5 text-[10px] font-semibold leading-none text-white"
+                            style={{ backgroundColor: agentColor }}
+                            title={agentLabel}
+                        >
                             <span
-                                className={`h-2 w-2 rounded-full ${statusDotClass}`}
+                                className={`h-1.5 w-1.5 rounded-full ${s.active ? 'bg-white' : 'bg-white/50'}`}
                             />
+                            {agentLabel.length <= 10 ? agentLabel : null}
                         </span>
-                        <div className="truncate text-base font-medium">
+                        <span className="truncate text-sm font-medium">
                             {sessionName}
-                        </div>
+                        </span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 text-xs">
                         {s.thinking ? (
-                            <span className="text-[#007AFF] animate-pulse">
+                            <span className="text-[#007AFF] animate-pulse font-medium">
                                 {t('session.item.thinking')}
                             </span>
                         ) : null}
-                        {todoProgress ? (
-                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                <BulbIcon className="h-3 w-3" />
-                                {todoProgress.completed}/{todoProgress.total}
-                            </span>
-                        ) : null}
                         {s.pendingRequestsCount > 0 ? (
-                            <span className="text-[var(--app-badge-warning-text)]">
-                                {t('session.item.pending')} {s.pendingRequestsCount}
+                            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--app-badge-warning-text)] px-1.5 text-[10px] font-bold leading-none text-white">
+                                {s.pendingRequestsCount}
                             </span>
                         ) : null}
                         <span className="text-[var(--app-hint)]">
@@ -285,18 +440,37 @@ function SessionItem(props: {
                         </span>
                     </div>
                 </div>
+
+                {/* Row 2: subtitle (summary or model) */}
+                {subtitle ? (
+                    <div className="truncate pl-8 text-xs text-[var(--app-hint)]">
+                        {subtitle}
+                    </div>
+                ) : null}
+
+                {/* Row 3: inline todo progress bar */}
+                {todoProgress ? (
+                    <div className="flex items-center gap-2 pl-8">
+                        <div className="h-1 flex-1 overflow-hidden rounded-full bg-[var(--app-subtle-bg)]">
+                            <div
+                                className="h-full rounded-full bg-[#007AFF] transition-all duration-300"
+                                style={{ width: `${todoPercent}%` }}
+                            />
+                        </div>
+                        <span className="flex items-center gap-1 shrink-0 text-[10px] text-[var(--app-hint)]">
+                            <BulbIcon className="h-3 w-3" />
+                            {todoProgress.completed}/{todoProgress.total}
+                        </span>
+                    </div>
+                ) : null}
+
+                {/* Row 4: metadata chips */}
                 {showPath ? (
-                    <div className="truncate text-xs text-[var(--app-hint)]">
+                    <div className="truncate pl-8 text-xs text-[var(--app-hint)]">
                         {s.metadata?.path ?? s.id}
                     </div>
                 ) : null}
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-hint)]">
-                    <span className="inline-flex items-center gap-2">
-                        <span className="flex h-4 w-4 items-center justify-center" aria-hidden="true">
-                            ❖
-                        </span>
-                        {getAgentLabel(s)}
-                    </span>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-8 text-xs text-[var(--app-hint)]">
                     {modelLabel ? (
                         <span>{t(modelLabel.key)}: {modelLabel.value}</span>
                     ) : null}
@@ -351,6 +525,8 @@ function SessionItem(props: {
     )
 }
 
+// --- Main Component ---
+
 export function SessionList(props: {
     sessions: SessionSummary[]
     onSelect: (sessionId: string) => void
@@ -364,9 +540,32 @@ export function SessionList(props: {
 }) {
     const { t } = useTranslation()
     const { renderHeader = true, api, selectedSessionId, machineLabelsById = {} } = props
+
+    // --- Filter state ---
+    const [filter, setFilter] = useState<StatusFilter>(loadSavedFilter)
+    const handleFilterChange = (f: StatusFilter) => {
+        setFilter(f)
+        try { localStorage.setItem(FILTER_STORAGE_KEY, f) } catch { /* ignore */ }
+    }
+
+    // --- Search state ---
+    const [searchQuery, setSearchQuery] = useState('')
+
+    // --- Filtered sessions ---
+    const filteredSessions = useMemo(() => {
+        let result = props.sessions
+        if (filter !== 'all') {
+            result = result.filter(s => matchesFilter(s, filter))
+        }
+        if (searchQuery.trim()) {
+            result = result.filter(s => matchesSearch(s, searchQuery.trim()))
+        }
+        return result
+    }, [props.sessions, filter, searchQuery])
+
     const groups = useMemo(
-        () => groupSessionsByDirectory(props.sessions),
-        [props.sessions]
+        () => groupSessionsByDirectory(filteredSessions),
+        [filteredSessions]
     )
     const [collapseOverrides, setCollapseOverrides] = useState<Map<string, boolean>>(
         () => new Map()
@@ -445,16 +644,39 @@ export function SessionList(props: {
                 </div>
             ) : null}
 
+            {/* Filter bar */}
+            <FilterBar
+                sessions={props.sessions}
+                filter={filter}
+                onFilterChange={handleFilterChange}
+            />
+
+            {/* Search bar */}
+            <div className="relative px-3 pb-2">
+                <SearchIcon className="absolute left-5 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--app-hint)] pointer-events-none" />
+                <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder={t('sessions.search')}
+                    className="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)] py-1.5 pl-8 pr-3 text-sm text-[var(--app-fg)] placeholder-[var(--app-hint)] outline-none focus:ring-1 focus:ring-[var(--app-link)] transition-colors"
+                />
+            </div>
+
+            {/* Session groups */}
             <div className="flex flex-col">
                 {groups.map((group) => {
                     const isCollapsed = isGroupCollapsed(group)
                     const machineLabel = resolveMachineLabel(group.machineId)
+                    const borderColor = group.hasActiveSession
+                        ? 'border-l-[var(--app-badge-success-text)]'
+                        : 'border-l-[var(--app-hint)]'
                     return (
                         <div key={group.key} className="mt-2 first:mt-0">
                             <button
                                 type="button"
                                 onClick={() => toggleGroup(group.key, isCollapsed)}
-                                className="sticky top-0 z-10 flex w-full flex-col gap-1 px-3 py-2.5 text-left bg-[var(--app-secondary-bg)] border-b border-[var(--app-border)] border-l-[3px] border-l-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)]"
+                                className={`sticky top-0 z-10 flex w-full flex-col gap-0.5 px-3 py-2.5 text-left bg-[var(--app-secondary-bg)] border-b border-[var(--app-border)] border-l-[3px] ${borderColor} transition-colors hover:bg-[var(--app-subtle-bg)]`}
                             >
                                 <div className="flex items-center gap-2 min-w-0 w-full">
                                     <ChevronIcon
@@ -468,14 +690,19 @@ export function SessionList(props: {
                                         {group.sessions.length}
                                     </span>
                                 </div>
-                                <div className="flex min-w-0 w-full flex-wrap items-center gap-2 pl-6 text-xs text-[var(--app-hint)]">
-                                    <span className="inline-flex items-center gap-1 rounded border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-0.5">
+                                <div className="flex min-w-0 w-full items-center gap-2 pl-6 text-[11px] text-[var(--app-hint)]">
+                                    <span className="inline-flex items-center gap-1">
                                         <MachineIcon className="h-3 w-3 shrink-0" />
                                         {machineLabel}
                                     </span>
-                                    <span className="min-w-0 flex-1 truncate" title={group.directory}>
-                                        {group.directory}
-                                    </span>
+                                    {group.pathSubtitle && group.pathSubtitle !== group.displayName ? (
+                                        <>
+                                            <span className="text-[var(--app-border)]">|</span>
+                                            <span className="min-w-0 truncate" title={group.pathSubtitle}>
+                                                {group.pathSubtitle}
+                                            </span>
+                                        </>
+                                    ) : null}
                                 </div>
                             </button>
                             {!isCollapsed ? (
