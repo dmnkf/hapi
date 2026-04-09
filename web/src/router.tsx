@@ -127,6 +127,18 @@ function SessionsPage() {
     const projectCount = useMemo(() => new Set(sessions.map(s =>
         s.metadata?.worktree?.basePath ?? s.metadata?.path ?? 'Other'
     )).size, [sessions])
+    const stats = useMemo(() => {
+        let active = 0
+        let pending = 0
+        let thinking = 0
+        for (const s of sessions) {
+            if (s.active) active++
+            if (s.pendingRequestsCount > 0) pending += s.pendingRequestsCount
+            if (s.thinking) thinking++
+        }
+        const connectedMachines = machines.filter(m => m.active).length
+        return { active, pending, thinking, connectedMachines }
+    }, [sessions, machines])
     const machineLabelsById = useMemo(() => {
         const labels: Record<string, string> = {}
         for (const machine of machines) {
@@ -144,27 +156,54 @@ function SessionsPage() {
                 className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} w-full lg:w-[420px] xl:w-[480px] shrink-0 flex-col bg-[var(--app-bg)] lg:border-r lg:border-[var(--app-divider)]`}
             >
                 <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                    <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
-                        <div className="text-xs text-[var(--app-hint)]">
-                            {t('sessions.count', { n: sessions.length, m: projectCount })}
+                    <div className="mx-auto w-full max-w-content px-3 py-2">
+                        <div className="flex items-center justify-between">
+                            <div className="text-xs text-[var(--app-hint)]">
+                                {t('sessions.count', { n: sessions.length, m: projectCount })}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => navigate({ to: '/settings' })}
+                                    className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
+                                    title={t('settings.title')}
+                                >
+                                    <SettingsIcon className="h-5 w-5" />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => navigate({ to: '/sessions/new' })}
+                                    className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors"
+                                    title={t('sessions.new')}
+                                >
+                                    <PlusIcon className="h-5 w-5" />
+                                </button>
+                            </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                type="button"
-                                onClick={() => navigate({ to: '/settings' })}
-                                className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
-                                title={t('settings.title')}
-                            >
-                                <SettingsIcon className="h-5 w-5" />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => navigate({ to: '/sessions/new' })}
-                                className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors"
-                                title={t('sessions.new')}
-                            >
-                                <PlusIcon className="h-5 w-5" />
-                            </button>
+                        {/* Dashboard summary */}
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                            {stats.active > 0 ? (
+                                <span className="inline-flex items-center gap-1 text-[var(--app-badge-success-text)]">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-badge-success-text)]" />
+                                    {t('dashboard.active', { n: stats.active })}
+                                </span>
+                            ) : null}
+                            {stats.thinking > 0 ? (
+                                <span className="inline-flex items-center gap-1 text-[#007AFF] animate-pulse">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-[#007AFF]" />
+                                    {t('dashboard.thinking', { n: stats.thinking })}
+                                </span>
+                            ) : null}
+                            {stats.pending > 0 ? (
+                                <span className="inline-flex items-center gap-1 text-[var(--app-badge-warning-text)]">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-badge-warning-text)]" />
+                                    {t('dashboard.pending', { n: stats.pending })}
+                                </span>
+                            ) : null}
+                            <span className="inline-flex items-center gap-1 text-[var(--app-hint)]">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
+                                {t('dashboard.machines', { n: stats.connectedMachines })}
+                            </span>
                         </div>
                     </div>
                 </div>

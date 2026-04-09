@@ -42,6 +42,12 @@ export default {
   'sessions.count': '{n} sessions in {m} projects',
   'sessions.new': 'New Session',
 
+  // Dashboard summary
+  'dashboard.active': '{n} active',
+  'dashboard.thinking': '{n} thinking',
+  'dashboard.pending': '{n} pending',
+  'dashboard.machines': '{n} machines',
+
   // Session list
   'session.item.path': 'path',
   'session.item.agent': 'agent',
