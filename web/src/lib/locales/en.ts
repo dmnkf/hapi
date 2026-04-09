@@ -63,6 +63,11 @@ export default {
   'session.title': 'Files',
   'session.more': 'More actions',
 
+  // Session tab bar
+  'session.tab.chat': 'Chat',
+  'session.tab.files': 'Files',
+  'session.tab.terminal': 'Terminal',
+
   // Session actions
   'session.action.rename': 'Rename',
   'session.action.archive': 'Archive',

@@ -31,6 +31,7 @@ import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
 import type { Machine } from '@/types/api'
+import { SessionTabBar } from '@/components/SessionTabBar'
 import FilesPage from '@/routes/sessions/files'
 import FilePage from '@/routes/sessions/file'
 import TerminalPage from '@/routes/sessions/terminal'
@@ -343,7 +344,16 @@ function SessionDetailRoute() {
     const basePath = `/sessions/${sessionId}`
     const isChat = pathname === basePath || pathname === `${basePath}/`
 
-    return isChat ? <SessionPage /> : <Outlet />
+    return (
+        <div
+            className="flex h-full min-h-0 flex-col [--app-floating-bottom-offset:52px] lg:[--app-floating-bottom-offset:0px]"
+        >
+            <div className="flex-1 min-h-0">
+                {isChat ? <SessionPage /> : <Outlet />}
+            </div>
+            <SessionTabBar />
+        </div>
+    )
 }
 
 function NewSessionPage() {

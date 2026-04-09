@@ -63,6 +63,11 @@ export default {
   'session.title': '文件',
   'session.more': '更多操作',
 
+  // Session tab bar
+  'session.tab.chat': '聊天',
+  'session.tab.files': '文件',
+  'session.tab.terminal': '终端',
+
   // Session actions
   'session.action.rename': '重命名',
   'session.action.archive': '归档',
