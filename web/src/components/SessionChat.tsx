@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
+import { startViewTransition } from '@/lib/viewTransition'
 import type {
     AttachmentMetadata,
     CodexCollaborationMode,
@@ -270,17 +271,17 @@ export function SessionChat(props: {
     }, [switchSession, props.onRefresh])
 
     const handleViewFiles = useCallback(() => {
-        navigate({
+        startViewTransition(() => navigate({
             to: '/sessions/$sessionId/files',
             params: { sessionId: props.session.id }
-        })
+        }))
     }, [navigate, props.session.id])
 
     const handleViewTerminal = useCallback(() => {
-        navigate({
+        startViewTransition(() => navigate({
             to: '/sessions/$sessionId/terminal',
             params: { sessionId: props.session.id }
-        })
+        }))
     }, [navigate, props.session.id])
 
     const handleSend = useCallback((text: string, attachments?: AttachmentMetadata[]) => {

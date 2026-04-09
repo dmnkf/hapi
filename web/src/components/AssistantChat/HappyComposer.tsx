@@ -443,11 +443,41 @@ export function HappyComposer(props: {
     const showEffortSettings = Boolean(onEffortChange && supportsEffort(agentFlavor))
     const showSettingsButton = Boolean(showCollaborationSettings || showPermissionSettings || showModelSettings || showEffortSettings)
     const showAbortButton = true
+    const showSlashCommandButton = autocompletePrefixes.includes('/')
     const voiceEnabled = Boolean(onVoiceToggle)
 
     const handleSend = useCallback(() => {
         api.composer().send()
     }, [api])
+
+    const handleSlashCommand = useCallback(() => {
+        // Insert '/' at the start (or at cursor if text is empty) to trigger autocomplete
+        const currentText = inputState.text
+        const isEmpty = currentText.trim().length === 0
+        const newText = isEmpty ? '/' : currentText
+        const newPos = isEmpty ? 1 : inputState.selection.start
+
+        if (isEmpty) {
+            api.composer().setText(newText)
+            setInputState({ text: newText, selection: { start: newPos, end: newPos } })
+        }
+
+        // Focus the textarea so the autocomplete overlay appears
+        setTimeout(() => {
+            const el = textareaRef.current
+            if (!el) return
+            if (isEmpty) {
+                el.setSelectionRange(newPos, newPos)
+            }
+            try {
+                el.focus({ preventScroll: true })
+            } catch {
+                el.focus()
+            }
+        }, 0)
+
+        haptic('light')
+    }, [api, inputState, haptic])
 
     const overlays = useMemo(() => {
         if (showSettings && (showCollaborationSettings || showPermissionSettings || showModelSettings || showEffortSettings)) {
@@ -703,6 +733,8 @@ export function HappyComposer(props: {
                         <ComposerButtons
                             canSend={canSend}
                             controlsDisabled={controlsDisabled}
+                            showSlashCommandButton={showSlashCommandButton}
+                            onSlashCommand={handleSlashCommand}
                             showSettingsButton={showSettingsButton}
                             onSettingsToggle={handleSettingsToggle}
                             showTerminalButton={showTerminalButton}

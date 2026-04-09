@@ -126,6 +126,8 @@ export default {
   'newSession.yolo': 'YOLO mode',
   'newSession.yolo.title': 'Bypass approvals and sandbox',
   'newSession.yolo.desc': 'Uses dangerous agent flags when spawning.',
+  'newSession.quickStart': 'Quick start',
+  'newSession.advancedOptions': 'Advanced options',
   'newSession.create': 'Create',
   'newSession.creating': 'Creating…',
 
@@ -228,6 +230,9 @@ export default {
   'composer.voice': 'Voice assistant',
   'composer.codexSlashUnsupported.title': 'Codex command unavailable',
   'composer.codexSlashUnsupported.body': 'HAPI remote mode does not yet run built-in Codex slash commands like {command}. Use natural language instead, or run it in the local Codex TUI.',
+  'composer.slashCommands': 'Commands',
+  'composer.slashCommands.builtin': 'Built-in',
+  'composer.slashCommands.custom': 'Custom',
 
   // Voice assistant
   'voice.connecting': 'Connecting...',

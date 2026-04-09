@@ -19,6 +19,7 @@ import { SessionList } from '@/components/SessionList'
 import { NewSession } from '@/components/NewSession'
 import { LoadingState } from '@/components/LoadingState'
 import { useAppContext } from '@/lib/app-context'
+import { startViewTransition } from '@/lib/viewTransition'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
 import { useMessages } from '@/hooks/queries/useMessages'
@@ -250,10 +251,10 @@ function SessionsPage() {
                     <SessionList
                         sessions={sessions}
                         selectedSessionId={selectedSessionId}
-                        onSelect={(sessionId) => navigate({
+                        onSelect={(sessionId) => startViewTransition(() => navigate({
                             to: '/sessions/$sessionId',
                             params: { sessionId },
-                        })}
+                        }))}
                         onNewSession={() => navigate({ to: '/sessions/new' })}
                         onRefresh={handleRefresh}
                         isLoading={isLoading}
@@ -471,7 +472,7 @@ function SessionDetailRoute() {
     const isChat = pathname === basePath || pathname === `${basePath}/`
 
     const handleSwipeBack = useCallback(() => {
-        navigate({ to: '/sessions' })
+        startViewTransition(() => navigate({ to: '/sessions' }), 'back')
     }, [navigate])
     const { containerRef: swipeRef, offset: swipeOffset, progress: swipeProgress } = useSwipeBack(handleSwipeBack)
 

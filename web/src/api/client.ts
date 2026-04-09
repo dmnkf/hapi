@@ -7,6 +7,7 @@ import type {
     FileReadResponse,
     FileSearchResponse,
     GitCommandResponse,
+    MachineDirectoryResponse,
     MachinePathsExistsResponse,
     MachinesResponse,
     MessagesResponse,
@@ -379,6 +380,19 @@ export class ApiClient {
             {
                 method: 'POST',
                 body: JSON.stringify({ paths })
+            }
+        )
+    }
+
+    async listMachineDirectory(
+        machineId: string,
+        path: string
+    ): Promise<MachineDirectoryResponse> {
+        return await this.request<MachineDirectoryResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/directory`,
+            {
+                method: 'POST',
+                body: JSON.stringify({ path })
             }
         )
     }

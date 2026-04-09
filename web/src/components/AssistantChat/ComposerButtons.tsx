@@ -125,6 +125,24 @@ function TerminalIcon() {
     )
 }
 
+function SlashCommandIcon() {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <line x1="7" y1="4" x2="17" y2="20" />
+        </svg>
+    )
+}
+
 function AttachmentIcon() {
     return (
         <svg
@@ -301,6 +319,8 @@ export function ComposerButtons(props: {
     controlsDisabled: boolean
     showSettingsButton: boolean
     onSettingsToggle: () => void
+    showSlashCommandButton?: boolean
+    onSlashCommand?: () => void
     showTerminalButton: boolean
     terminalDisabled: boolean
     terminalLabel: string
@@ -334,6 +354,19 @@ export function ComposerButtons(props: {
                 >
                     <AttachmentIcon />
                 </ComposerPrimitive.AddAttachment>
+
+                {props.showSlashCommandButton ? (
+                    <button
+                        type="button"
+                        aria-label={t('composer.slashCommands')}
+                        title={t('composer.slashCommands')}
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={props.onSlashCommand}
+                        disabled={props.controlsDisabled}
+                    >
+                        <SlashCommandIcon />
+                    </button>
+                ) : null}
 
                 {props.showSettingsButton ? (
                     <button

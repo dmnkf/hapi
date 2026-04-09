@@ -392,3 +392,10 @@ html[data-theme="dark"] .shiki span {
 @keyframes slide-in-left {
     from { transform: translateX(-25%); opacity: 0; }
 }
+
+@media (prefers-reduced-motion: reduce) {
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+        animation: none !important;
+    }
+}

@@ -25,7 +25,25 @@ import {
 } from './preferences'
 import { SessionTypeSelector } from './SessionTypeSelector'
 import { YoloToggle } from './YoloToggle'
+import { QuickStartCards } from './QuickStartCards'
+import { useQuickStartConfigs, type QuickStartConfig } from './useQuickStartConfigs'
 import { formatRunnerSpawnError } from '../../utils/formatRunnerSpawnError'
+
+const ADVANCED_STORAGE_KEY = 'hapi:newSession:showAdvanced'
+
+function loadShowAdvanced(): boolean {
+    try {
+        return localStorage.getItem(ADVANCED_STORAGE_KEY) === 'true'
+    } catch {
+        return false
+    }
+}
+
+function getMachineTitle(machine: Machine): string {
+    if (machine.metadata?.displayName) return machine.metadata.displayName
+    if (machine.metadata?.host) return machine.metadata.host
+    return machine.id.slice(0, 8)
+}
 
 export function NewSession(props: {
     api: ApiClient
@@ -40,6 +58,7 @@ export function NewSession(props: {
     const { sessions } = useSessions(props.api)
     const isFormDisabled = Boolean(isPending || props.isLoading)
     const { getRecentPaths, addRecentPath, getLastUsedMachineId, setLastUsedMachineId } = useRecentPaths()
+    const { configs: quickStartConfigs, addConfig: addQuickStartConfig } = useQuickStartConfigs()
 
     const [machineId, setMachineId] = useState<string | null>(null)
     const [directory, setDirectory] = useState('')
@@ -54,7 +73,11 @@ export function NewSession(props: {
     const [worktreeName, setWorktreeName] = useState('')
     const [directoryCreationConfirmed, setDirectoryCreationConfirmed] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const [showAdvanced, setShowAdvanced] = useState(loadShowAdvanced)
     const worktreeInputRef = useRef<HTMLInputElement>(null)
+
+    // Smart default: single machine auto-select
+    const isSingleMachine = props.machines.length === 1
 
     useEffect(() => {
         if (sessionType === 'worktree') {
@@ -227,6 +250,14 @@ export function NewSession(props: {
         }
     }, [suggestions, selectedIndex, moveUp, moveDown, clearSuggestions, handleSuggestionSelect])
 
+    const handleToggleAdvanced = useCallback(() => {
+        setShowAdvanced((prev) => {
+            const next = !prev
+            try { localStorage.setItem(ADVANCED_STORAGE_KEY, next ? 'true' : 'false') } catch { /* ignore */ }
+            return next
+        })
+    }, [])
+
     async function handleCreate() {
         if (!machineId || !trimmedDirectory) return
 
@@ -267,6 +298,15 @@ export function NewSession(props: {
                 haptic.notification('success')
                 setLastUsedMachineId(machineId)
                 addRecentPath(machineId, trimmedDirectory)
+                // Save quick-start config
+                const machineName = selectedMachine ? getMachineTitle(selectedMachine) : machineId
+                addQuickStartConfig({
+                    machineId,
+                    machineName,
+                    directory: trimmedDirectory,
+                    agent,
+                    model,
+                })
                 props.onSuccess(result.sessionId)
                 return
             }
@@ -279,22 +319,66 @@ export function NewSession(props: {
         }
     }
 
+    const [quickStartPending, setQuickStartPending] = useState(false)
+
+    const handleQuickStartSelect = useCallback((config: QuickStartConfig) => {
+        setMachineId(config.machineId)
+        setDirectory(config.directory)
+        setAgent(config.agent)
+        setModel(config.model)
+        setQuickStartPending(true)
+    }, [])
+
+    useEffect(() => {
+        if (!quickStartPending) return
+        if (!machineId || !directory.trim()) return
+        setQuickStartPending(false)
+        handleCreate()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [quickStartPending, machineId, directory])
+
+    const connectedMachineIds = useMemo(
+        () => new Set(props.machines.map((m) => m.id)),
+        [props.machines]
+    )
+
     const canCreate = Boolean(machineId && trimmedDirectory && !isFormDisabled && !missingWorktreeDirectory)
 
     return (
         <div className="flex flex-col divide-y divide-[var(--app-divider)]">
-            <MachineSelector
-                machines={props.machines}
-                machineId={machineId}
-                isLoading={props.isLoading}
+            {/* Quick-start cards */}
+            <QuickStartCards
+                configs={quickStartConfigs}
                 isDisabled={isFormDisabled}
-                onChange={handleMachineChange}
+                connectedMachineIds={connectedMachineIds}
+                onSelect={handleQuickStartSelect}
             />
+
+            {/* Machine selector: show as chip if single machine, full dropdown otherwise */}
+            {isSingleMachine && selectedMachine ? (
+                <div className="flex items-center gap-2 px-3 py-2">
+                    <span className="text-xs text-[var(--app-hint)]">{t('newSession.machine')}:</span>
+                    <span className="rounded bg-[var(--app-subtle-bg)] px-2 py-0.5 text-xs text-[var(--app-fg)]">
+                        {getMachineTitle(selectedMachine)}
+                        {selectedMachine.metadata?.platform ? ` (${selectedMachine.metadata.platform})` : ''}
+                    </span>
+                </div>
+            ) : (
+                <MachineSelector
+                    machines={props.machines}
+                    machineId={machineId}
+                    isLoading={props.isLoading}
+                    isDisabled={isFormDisabled}
+                    onChange={handleMachineChange}
+                />
+            )}
             {runnerSpawnError ? (
                 <div className="px-3 py-2 text-xs text-red-600">
                     Runner last spawn error: {runnerSpawnError}
                 </div>
             ) : null}
+
+            {/* Directory - always visible */}
             <DirectorySection
                 directory={directory}
                 suggestions={suggestions}
@@ -310,42 +394,68 @@ export function NewSession(props: {
                 onSuggestionSelect={handleSuggestionSelect}
                 onPathClick={handlePathClick}
             />
-            <SessionTypeSelector
-                sessionType={sessionType}
-                worktreeName={worktreeName}
-                worktreeInputRef={worktreeInputRef}
-                isDisabled={isFormDisabled}
-                onSessionTypeChange={setSessionType}
-                onWorktreeNameChange={setWorktreeName}
-            />
+
+            {/* Agent - always visible */}
             <AgentSelector
                 agent={agent}
                 isDisabled={isFormDisabled}
                 onAgentChange={setAgent}
             />
-            <ModelSelector
-                agent={agent}
-                model={model}
-                isDisabled={isFormDisabled}
-                onModelChange={setModel}
-            />
-            <ClaudeEffortSelector
-                agent={agent}
-                effort={effort}
-                isDisabled={isFormDisabled}
-                onEffortChange={setEffort}
-            />
-            <ReasoningEffortSelector
-                agent={agent}
-                value={modelReasoningEffort}
-                isDisabled={isFormDisabled}
-                onChange={setModelReasoningEffort}
-            />
-            <YoloToggle
-                yoloMode={yoloMode}
-                isDisabled={isFormDisabled}
-                onToggle={setYoloMode}
-            />
+
+            {/* Advanced options toggle */}
+            <button
+                type="button"
+                onClick={handleToggleAdvanced}
+                className="flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium text-[var(--app-link)] hover:text-[var(--app-link-hover)] transition-colors"
+            >
+                <svg
+                    className={`h-3 w-3 transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2.5}
+                >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                {t('newSession.advancedOptions')}
+            </button>
+
+            {/* Advanced options section */}
+            {showAdvanced && (
+                <>
+                    <ModelSelector
+                        agent={agent}
+                        model={model}
+                        isDisabled={isFormDisabled}
+                        onModelChange={setModel}
+                    />
+                    <ClaudeEffortSelector
+                        agent={agent}
+                        effort={effort}
+                        isDisabled={isFormDisabled}
+                        onEffortChange={setEffort}
+                    />
+                    <ReasoningEffortSelector
+                        agent={agent}
+                        value={modelReasoningEffort}
+                        isDisabled={isFormDisabled}
+                        onChange={setModelReasoningEffort}
+                    />
+                    <YoloToggle
+                        yoloMode={yoloMode}
+                        isDisabled={isFormDisabled}
+                        onToggle={setYoloMode}
+                    />
+                    <SessionTypeSelector
+                        sessionType={sessionType}
+                        worktreeName={worktreeName}
+                        worktreeInputRef={worktreeInputRef}
+                        isDisabled={isFormDisabled}
+                        onSessionTypeChange={setSessionType}
+                        onWorktreeNameChange={setWorktreeName}
+                    />
+                </>
+            )}
 
             {(error ?? spawnError) ? (
                 <div className="px-3 py-2 text-sm text-red-600">

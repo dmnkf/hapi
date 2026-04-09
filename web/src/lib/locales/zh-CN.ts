@@ -128,6 +128,8 @@ export default {
   'newSession.yolo': 'YOLO \u6a21\u5f0f',
   'newSession.yolo.title': '\u8df3\u8fc7\u5ba1\u6279\u548c\u6c99\u7bb1',
   'newSession.yolo.desc': '\u542f\u52a8\u65f6\u4f7f\u7528\u5371\u9669\u7684\u4ee3\u7406\u6807\u5fd7\u3002',
+  'newSession.quickStart': '\u5feb\u901f\u5f00\u59cb',
+  'newSession.advancedOptions': '\u9ad8\u7ea7\u9009\u9879',
   'newSession.create': '\u521b\u5efa',
   'newSession.creating': '\u521b\u5efa\u4e2d\u2026',
 
@@ -230,6 +232,9 @@ export default {
   'composer.voice': '\u8bed\u97f3\u52a9\u624b',
   'composer.codexSlashUnsupported.title': '\u65e0\u6cd5\u6267\u884c Codex \u547d\u4ee4',
   'composer.codexSlashUnsupported.body': 'HAPI \u8fdc\u7a0b\u6a21\u5f0f\u6682\u4e0d\u652f\u6301 {command} \u8fd9\u7c7b Codex \u5185\u5efa slash command\uff0c\u8bf7\u6539\u7528\u81ea\u7136\u8bed\u8a00\uff0c\u6216\u5728\u672c\u5730 Codex TUI \u4e2d\u6267\u884c\u3002',
+  'composer.slashCommands': '\u547d\u4ee4',
+  'composer.slashCommands.builtin': '\u5185\u7f6e',
+  'composer.slashCommands.custom': '\u81ea\u5b9a\u4e49',
 
   // Voice assistant
   'voice.connecting': '\u8fde\u63a5\u4e2d...',

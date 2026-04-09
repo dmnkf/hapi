@@ -1,4 +1,5 @@
 import { useLocation, useNavigate, useParams } from '@tanstack/react-router'
+import { startViewTransition } from '@/lib/viewTransition'
 import { useTranslation } from '@/lib/use-translation'
 
 function ChatIcon(props: { className?: string }) {
@@ -105,7 +106,7 @@ export function SessionTabBar() {
                         <button
                             key={tab.key}
                             type="button"
-                            onClick={() => navigate({ to: tab.path })}
+                            onClick={() => startViewTransition(() => navigate({ to: tab.path }))}
                             className={`flex flex-1 flex-col items-center justify-center gap-0.5 h-full transition-colors ${
                                 isActive
                                     ? 'text-[var(--app-fg)]'
