@@ -1,4 +1,6 @@
 import { useCallback, useMemo } from 'react'
+import { useSwipeBack } from '@/hooks/useSwipeBack'
+import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { useQueryClient } from '@tanstack/react-query'
 import {
     Navigate,
@@ -114,6 +116,13 @@ function SessionsPage() {
     const handleRefresh = useCallback(() => {
         void refetch()
     }, [refetch])
+    const {
+        containerRef: pullRef,
+        pullDistance,
+        isRefreshing: isPullRefreshing,
+        pastThreshold,
+        indicatorHeight,
+    } = usePullToRefresh(handleRefresh)
 
     const projectCount = useMemo(() => new Set(sessions.map(s =>
         s.metadata?.worktree?.basePath ?? s.metadata?.path ?? 'Other'
@@ -160,7 +169,42 @@ function SessionsPage() {
                     </div>
                 </div>
 
-                <div className="app-scroll-y flex-1 min-h-0 desktop-scrollbar-left">
+                <div ref={pullRef} className="app-scroll-y flex-1 min-h-0 desktop-scrollbar-left">
+                    {/* Pull-to-refresh indicator */}
+                    <div
+                        className="flex items-center justify-center overflow-hidden transition-[height] duration-200"
+                        style={{
+                            height: isPullRefreshing ? `${indicatorHeight}px` : `${pullDistance}px`,
+                            transition: pullDistance === 0 || isPullRefreshing ? 'height 0.2s ease-out' : 'none',
+                        }}
+                    >
+                        {(pullDistance > 0 || isPullRefreshing) && (
+                            <svg
+                                className={`h-5 w-5 text-[var(--app-hint)] ${isPullRefreshing ? 'animate-spin' : ''}`}
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                style={{
+                                    transform: isPullRefreshing ? undefined : `rotate(${pastThreshold ? 180 : 0}deg)`,
+                                    transition: 'transform 0.2s ease-out',
+                                }}
+                            >
+                                {isPullRefreshing ? (
+                                    <>
+                                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                                    </>
+                                ) : (
+                                    <>
+                                        <polyline points="7 13 12 18 17 13" />
+                                        <line x1="12" y1="6" x2="12" y2="18" />
+                                    </>
+                                )}
+                            </svg>
+                        )}
+                    </div>
                     {error ? (
                         <div className="mx-auto w-full max-w-content px-3 py-2">
                             <div className="text-sm text-red-600">{error}</div>
@@ -338,16 +382,68 @@ function SessionPage() {
     )
 }
 
+function SwipeBackIndicator({ offset, progress }: { offset: number; progress: number }) {
+    if (offset <= 0) return null
+    return (
+        <div
+            className="fixed inset-0 z-50 pointer-events-none"
+            style={{ opacity: progress * 0.3 }}
+        >
+            <div
+                className="absolute left-0 top-0 h-full bg-[var(--app-fg)]"
+                style={{
+                    width: `${Math.min(offset, 80)}px`,
+                    opacity: progress,
+                    transition: offset === 0 ? 'all 0.2s ease-out' : 'none',
+                }}
+            />
+            <div
+                className="absolute top-1/2 -translate-y-1/2 flex items-center justify-center"
+                style={{
+                    left: `${Math.min(offset - 24, 56)}px`,
+                    opacity: progress,
+                    transition: offset === 0 ? 'all 0.2s ease-out' : 'none',
+                }}
+            >
+                <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--app-bg)"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{
+                        transform: `scale(${0.6 + progress * 0.4})`,
+                        transition: offset === 0 ? 'transform 0.2s ease-out' : 'none',
+                    }}
+                >
+                    <polyline points="15 18 9 12 15 6" />
+                </svg>
+            </div>
+        </div>
+    )
+}
+
 function SessionDetailRoute() {
     const pathname = useLocation({ select: location => location.pathname })
+    const navigate = useNavigate()
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
     const basePath = `/sessions/${sessionId}`
     const isChat = pathname === basePath || pathname === `${basePath}/`
 
+    const handleSwipeBack = useCallback(() => {
+        navigate({ to: '/sessions' })
+    }, [navigate])
+    const { containerRef: swipeRef, offset: swipeOffset, progress: swipeProgress } = useSwipeBack(handleSwipeBack)
+
     return (
         <div
+            ref={swipeRef}
             className="flex h-full min-h-0 flex-col [--app-floating-bottom-offset:52px] lg:[--app-floating-bottom-offset:0px]"
         >
+            <SwipeBackIndicator offset={swipeOffset} progress={swipeProgress} />
             <div className="flex-1 min-h-0">
                 {isChat ? <SessionPage /> : <Outlet />}
             </div>
