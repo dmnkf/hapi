@@ -189,8 +189,8 @@ function SessionsPage() {
                                 </span>
                             ) : null}
                             {stats.thinking > 0 ? (
-                                <span className="inline-flex items-center gap-1 text-[#007AFF] animate-pulse">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-[#007AFF]" />
+                                <span className="inline-flex items-center gap-1 text-[var(--app-accent-blue)] animate-pulse">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent-blue)]" />
                                     {t('dashboard.thinking', { n: stats.thinking })}
                                 </span>
                             ) : null}

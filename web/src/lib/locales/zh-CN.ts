@@ -56,6 +56,7 @@ export default {
   'session.item.pending': '\u5f85\u5904\u7406',
   'session.item.thinking': '\u601d\u8003\u4e2d',
   'sessions.search': '\u641c\u7d22\u4f1a\u8bdd\u2026',
+  'sessions.noResults': '\u6ca1\u6709\u5339\u914d\u7684\u4f1a\u8bdd',
   'sessions.filter.all': '\u5168\u90e8',
   'sessions.filter.active': '\u6d3b\u8dc3',
   'sessions.filter.pending': '\u5f85\u5904\u7406',

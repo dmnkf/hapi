@@ -50,8 +50,8 @@ function getConnectionStatus(
     if (voiceStatus === 'connecting') {
         return {
             text: t('voice.connecting'),
-            color: 'text-[#007AFF]',
-            dotColor: 'bg-[#007AFF]',
+            color: 'text-[var(--app-accent-blue)]',
+            dotColor: 'bg-[var(--app-accent-blue)]',
             isPulsing: true
         }
     }
@@ -59,8 +59,8 @@ function getConnectionStatus(
     if (!active) {
         return {
             text: t('misc.offline'),
-            color: 'text-[#999]',
-            dotColor: 'bg-[#999]',
+            color: 'text-[var(--app-hint)]',
+            dotColor: 'bg-[var(--app-hint)]',
             isPulsing: false
         }
     }
@@ -68,8 +68,8 @@ function getConnectionStatus(
     if (hasPermissions) {
         return {
             text: t('misc.permissionRequired'),
-            color: 'text-[#FF9500]',
-            dotColor: 'bg-[#FF9500]',
+            color: 'text-[var(--app-badge-warning-text)]',
+            dotColor: 'bg-[var(--app-badge-warning-text)]',
             isPulsing: true
         }
     }
@@ -78,16 +78,16 @@ function getConnectionStatus(
         const vibingMessage = VIBING_MESSAGES[Math.floor(Math.random() * VIBING_MESSAGES.length)].toLowerCase() + '…'
         return {
             text: vibingMessage,
-            color: 'text-[#007AFF]',
-            dotColor: 'bg-[#007AFF]',
+            color: 'text-[var(--app-accent-blue)]',
+            dotColor: 'bg-[var(--app-accent-blue)]',
             isPulsing: true
         }
     }
 
     return {
         text: t('misc.online'),
-        color: 'text-[#34C759]',
-        dotColor: 'bg-[#34C759]',
+        color: 'text-[var(--app-badge-success-text)]',
+        dotColor: 'bg-[var(--app-badge-success-text)]',
         isPulsing: false
     }
 }

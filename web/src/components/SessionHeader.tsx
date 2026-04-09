@@ -154,10 +154,10 @@ export function SessionHeader(props: {
 
                     {/* Session info - two lines: title and path */}
                     <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold">
+                        <div className="truncate text-[15px] font-semibold leading-tight">
                             {title}
                         </div>
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-[var(--app-hint)]">
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-[var(--app-hint)] leading-tight">
                             <span className="inline-flex items-center gap-1">
                                 <span aria-hidden="true">❖</span>
                                 {session.metadata?.flavor?.trim() || 'unknown'}

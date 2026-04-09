@@ -56,6 +56,7 @@ export default {
   'session.item.pending': 'pending',
   'session.item.thinking': 'thinking',
   'sessions.search': 'Search sessions…',
+  'sessions.noResults': 'No sessions match your filters',
   'sessions.filter.all': 'All',
   'sessions.filter.active': 'Active',
   'sessions.filter.pending': 'Pending',

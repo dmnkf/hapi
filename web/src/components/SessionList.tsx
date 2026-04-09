@@ -607,7 +607,7 @@ function SessionItem(props: {
                         </div>
                         <div className="flex items-center gap-2 shrink-0 text-xs">
                             {s.thinking ? (
-                                <span className="text-[#007AFF] animate-pulse font-medium">
+                                <span className="text-[var(--app-accent-blue)] animate-pulse font-medium">
                                     {t('session.item.thinking')}
                                 </span>
                             ) : null}
@@ -634,7 +634,7 @@ function SessionItem(props: {
                         <div className="flex items-center gap-2 pl-8">
                             <div className="h-1 flex-1 overflow-hidden rounded-full bg-[var(--app-subtle-bg)]">
                                 <div
-                                    className="h-full rounded-full bg-[#007AFF] transition-all duration-300"
+                                    className="h-full rounded-full bg-[var(--app-accent-blue)] transition-all duration-300"
                                     style={{ width: `${todoPercent}%` }}
                                 />
                             </div>
@@ -845,6 +845,30 @@ export function SessionList(props: {
                 />
             </div>
 
+            {/* Skeleton loading */}
+            {props.isLoading && props.sessions.length === 0 ? (
+                <div className="flex flex-col gap-3 px-3 py-2">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                        <div key={i} className="flex flex-col gap-2 py-3">
+                            <div className="flex items-center gap-2.5">
+                                <div className="skeleton h-5 w-14 rounded-full" />
+                                <div className="skeleton h-4 flex-1 max-w-[200px]" />
+                            </div>
+                            <div className="skeleton h-3 ml-8 w-3/4" />
+                            <div className="skeleton h-1 ml-8 w-1/2 rounded-full" />
+                        </div>
+                    ))}
+                </div>
+            ) : null}
+
+            {/* Empty state */}
+            {!props.isLoading && filteredSessions.length === 0 && props.sessions.length > 0 ? (
+                <div className="flex flex-col items-center gap-2 px-3 py-8 text-center">
+                    <SearchIcon className="h-8 w-8 text-[var(--app-hint)] opacity-40" />
+                    <p className="text-sm text-[var(--app-hint)]">{t('sessions.noResults')}</p>
+                </div>
+            ) : null}
+
             {/* Session groups */}
             <div className="flex flex-col">
                 {groups.map((group) => {
@@ -887,20 +911,25 @@ export function SessionList(props: {
                                     ) : null}
                                 </div>
                             </button>
-                            {!isCollapsed ? (
-                                <div className="flex flex-col divide-y divide-[var(--app-divider)] border-b border-[var(--app-divider)] border-l border-l-[var(--app-divider)]">
-                                    {group.sessions.map((s) => (
-                                        <SessionItem
-                                            key={s.id}
-                                            session={s}
-                                            onSelect={props.onSelect}
-                                            showPath={false}
-                                            api={api}
-                                            selected={s.id === selectedSessionId}
-                                        />
-                                    ))}
+                            <div
+                                className="session-group-content"
+                                data-collapsed={isCollapsed}
+                            >
+                                <div className="session-group-inner">
+                                    <div className="flex flex-col divide-y divide-[var(--app-divider)] border-b border-[var(--app-divider)] border-l border-l-[var(--app-divider)]">
+                                        {group.sessions.map((s) => (
+                                            <SessionItem
+                                                key={s.id}
+                                                session={s}
+                                                onSelect={props.onSelect}
+                                                showPath={false}
+                                                api={api}
+                                                selected={s.id === selectedSessionId}
+                                            />
+                                        ))}
+                                    </div>
                                 </div>
-                            ) : null}
+                            </div>
                         </div>
                     )
                 })}
