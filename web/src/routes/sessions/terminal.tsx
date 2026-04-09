@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PointerEvent } from 'react'
 import { useParams } from '@tanstack/react-router'
 import type { Terminal } from '@xterm/xterm'
@@ -186,12 +186,13 @@ export default function TerminalPage() {
     const goBack = useAppGoBack()
     const { session } = useSession(api, sessionId)
     const terminalSupported = isRemoteTerminalSupported(session?.metadata)
-    const terminalId = useMemo(() => {
+    const generateTerminalId = useCallback(() => {
         if (typeof crypto?.randomUUID === 'function') {
             return crypto.randomUUID()
         }
         return `${Date.now()}-${Math.random().toString(16).slice(2)}`
-    }, [sessionId])
+    }, [])
+    const [terminalId, setTerminalId] = useState(generateTerminalId)
     const terminalRef = useRef<Terminal | null>(null)
     const inputDisposableRef = useRef<{ dispose: () => void } | null>(null)
     const connectOnceRef = useRef(false)
@@ -296,8 +297,9 @@ export default function TerminalPage() {
     useEffect(() => {
         connectOnceRef.current = false
         setExitInfo(null)
+        setTerminalId(generateTerminalId())
         disconnect()
-    }, [sessionId, disconnect])
+    }, [sessionId, disconnect, generateTerminalId])
 
     useEffect(() => {
         return () => {
@@ -328,12 +330,15 @@ export default function TerminalPage() {
         disconnect()
         connectOnceRef.current = false
         setExitInfo(null)
+        // Generate a fresh terminalId to avoid collisions with stale
+        // registry entries that may not have been cleaned up yet.
+        setTerminalId(generateTerminalId())
         // Small delay to let the socket fully tear down
         setTimeout(() => {
             connectOnceRef.current = true
             connect(size.cols, size.rows)
         }, 200)
-    }, [session?.active, terminalSupported, disconnect, connect])
+    }, [session?.active, terminalSupported, disconnect, connect, generateTerminalId])
 
     const quickInputDisabled = !session?.active || terminalState.status !== 'connected'
     const writePlainInput = useCallback((text: string) => {

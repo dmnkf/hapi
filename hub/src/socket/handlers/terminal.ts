@@ -85,6 +85,8 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
     socket.on('terminal:create', (data: unknown) => {
         const parsed = terminalCreateSchema.safeParse(data)
         if (!parsed.success) {
+            const terminalId = typeof data === 'object' && data !== null && 'terminalId' in data ? String((data as Record<string, unknown>).terminalId) : 'unknown'
+            emitTerminalError(terminalId, 'Invalid terminal create payload.')
             return
         }
 
@@ -136,6 +138,8 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
     socket.on('terminal:write', (data: unknown) => {
         const parsed = terminalWriteSchema.safeParse(data)
         if (!parsed.success) {
+            const terminalId = typeof data === 'object' && data !== null && 'terminalId' in data ? String((data as Record<string, unknown>).terminalId) : 'unknown'
+            emitTerminalError(terminalId, 'Invalid terminal write payload.')
             return
         }
 
@@ -160,6 +164,8 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
     socket.on('terminal:resize', (data: unknown) => {
         const parsed = terminalResizeSchema.safeParse(data)
         if (!parsed.success) {
+            const terminalId = typeof data === 'object' && data !== null && 'terminalId' in data ? String((data as Record<string, unknown>).terminalId) : 'unknown'
+            emitTerminalError(terminalId, 'Invalid terminal resize payload.')
             return
         }
 
@@ -185,6 +191,8 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
     socket.on('terminal:close', (data: unknown) => {
         const parsed = terminalCloseSchema.safeParse(data)
         if (!parsed.success) {
+            const terminalId = typeof data === 'object' && data !== null && 'terminalId' in data ? String((data as Record<string, unknown>).terminalId) : 'unknown'
+            emitTerminalError(terminalId, 'Invalid terminal close payload.')
             return
         }
 

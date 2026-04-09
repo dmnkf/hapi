@@ -71,11 +71,9 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
             }
             return
         }
+        // Update auth for future reconnects without killing the active connection.
+        // Disconnecting to rotate the token destroys the CLI-side PTY, losing shell state.
         socket.auth = { token: options.token }
-        if (socket.connected) {
-            socket.disconnect()
-            socket.connect()
-        }
     }, [options.token])
 
     const isCurrentTerminal = useCallback((terminalId: string) => terminalId === terminalIdRef.current, [])

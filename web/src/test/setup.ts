@@ -24,4 +24,6 @@ const storageMock = (() => {
 })()
 
 Object.defineProperty(globalThis, 'localStorage', { value: storageMock, writable: true })
-Object.defineProperty(window, 'localStorage', { value: storageMock, writable: true })
+if (typeof window !== 'undefined') {
+    Object.defineProperty(window, 'localStorage', { value: storageMock, writable: true })
+}

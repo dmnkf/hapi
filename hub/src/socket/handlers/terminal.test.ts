@@ -225,4 +225,65 @@ describe('terminal socket handlers', () => {
             message: 'Too many terminals open (max 1).'
         })
     })
+
+    it('emits terminal:error when create payload fails validation', () => {
+        const { terminalSocket } = createHarness()
+
+        terminalSocket.trigger('terminal:create', { sessionId: 'session-1', terminalId: 'bad-1' })
+
+        const errorEvent = lastEmit(terminalSocket, 'terminal:error')
+        expect(errorEvent).toBeDefined()
+        expect(errorEvent?.data).toEqual({
+            terminalId: 'bad-1',
+            message: 'Invalid terminal create payload.'
+        })
+    })
+
+    it('emits terminal:error when write payload fails validation', () => {
+        const { terminalSocket, cliNamespace, terminalRegistry } = createHarness()
+        const cliSocket = new FakeSocket('cli-socket-1')
+        connectCliSocket(cliNamespace, cliSocket, 'session-1')
+
+        terminalSocket.trigger('terminal:create', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1',
+            cols: 80,
+            rows: 24
+        })
+
+        terminalSocket.trigger('terminal:write', { terminalId: 'terminal-1' })
+
+        const errorEvent = lastEmit(terminalSocket, 'terminal:error')
+        expect(errorEvent).toBeDefined()
+        expect(errorEvent?.data).toEqual({
+            terminalId: 'terminal-1',
+            message: 'Invalid terminal write payload.'
+        })
+    })
+
+    it('emits terminal:error when resize payload fails validation', () => {
+        const { terminalSocket } = createHarness()
+
+        terminalSocket.trigger('terminal:resize', { terminalId: 'terminal-1', cols: -1 })
+
+        const errorEvent = lastEmit(terminalSocket, 'terminal:error')
+        expect(errorEvent).toBeDefined()
+        expect(errorEvent?.data).toEqual({
+            terminalId: 'terminal-1',
+            message: 'Invalid terminal resize payload.'
+        })
+    })
+
+    it('emits terminal:error with "unknown" terminalId when payload has no terminalId', () => {
+        const { terminalSocket } = createHarness()
+
+        terminalSocket.trigger('terminal:create', { bogus: true })
+
+        const errorEvent = lastEmit(terminalSocket, 'terminal:error')
+        expect(errorEvent).toBeDefined()
+        expect(errorEvent?.data).toEqual({
+            terminalId: 'unknown',
+            message: 'Invalid terminal create payload.'
+        })
+    })
 })

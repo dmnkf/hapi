@@ -85,6 +85,7 @@ export class ApiSessionClient extends EventEmitter {
     private hasConnectedOnce = false
     readonly rpcHandlerManager: RpcHandlerManager
     private readonly terminalManager: TerminalManager
+    private terminalCloseTimer: ReturnType<typeof setTimeout> | null = null
     private agentStateLock = new AsyncLock()
     private metadataLock = new AsyncLock()
 
@@ -132,6 +133,11 @@ export class ApiSessionClient extends EventEmitter {
 
         this.socket.on('connect', () => {
             logger.debug('Socket connected successfully')
+            // Cancel pending terminal cleanup -- the socket reconnected in time.
+            if (this.terminalCloseTimer) {
+                clearTimeout(this.terminalCloseTimer)
+                this.terminalCloseTimer = null
+            }
             this.rpcHandlerManager.onSocketConnect(this.socket)
             if (this.hasConnectedOnce) {
                 this.needsBackfill = true
@@ -152,7 +158,15 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.on('disconnect', (reason) => {
             logger.debug('[API] Socket disconnected:', reason)
             this.rpcHandlerManager.onSocketDisconnect()
-            this.terminalManager.closeAll()
+            // Grace period: wait 5s before killing PTYs so brief network blips
+            // don't destroy the user's terminal session.
+            if (this.terminalCloseTimer) {
+                clearTimeout(this.terminalCloseTimer)
+            }
+            this.terminalCloseTimer = setTimeout(() => {
+                this.terminalCloseTimer = null
+                this.terminalManager.closeAll()
+            }, 5_000)
             if (this.hasConnectedOnce) {
                 this.needsBackfill = true
             }
@@ -657,6 +671,10 @@ export class ApiSessionClient extends EventEmitter {
 
     close(): void {
         this.rpcHandlerManager.onSocketDisconnect()
+        if (this.terminalCloseTimer) {
+            clearTimeout(this.terminalCloseTimer)
+            this.terminalCloseTimer = null
+        }
         this.terminalManager.closeAll()
         this.socket.disconnect()
     }
