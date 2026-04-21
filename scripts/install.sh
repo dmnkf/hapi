@@ -65,7 +65,7 @@ resolve_version() {
     # Fetch latest release tag via GitHub API
     local api_url="https://api.github.com/repos/${REPO}/releases/latest"
     local tag
-    tag="$(curl -fsSL "$api_url" | grep -o '"tag_name": *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
+    tag="$(curl -fsSL "$api_url" | grep --color=never '"tag_name":' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
     if [ -z "$tag" ]; then
         err "could not determine latest version from GitHub API. Set HAPI_VERSION explicitly."
     fi
@@ -90,7 +90,8 @@ download_and_install() {
     local url="https://github.com/${REPO}/releases/download/${version}/${asset}"
     local tmp_dir
     tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' EXIT
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmp_dir'" EXIT
 
     msg ">>> Downloading $asset from $version"
     if ! curl -fLo "$tmp_dir/$asset" "$url"; then
