@@ -132,25 +132,39 @@ jobs:
       - name: Open conflict issue
         if: steps.check.outputs.needs_sync == 'true' && steps.merge.outputs.conflicts == 'true'
         uses: actions/github-script@v7
+        env:
+          COMMIT_SUMMARY: ${{ steps.summary.outputs.summary }}
+          UPSTREAM_SHORT: ${{ steps.check.outputs.upstream_short }}
+          UPSTREAM_SHA: ${{ steps.check.outputs.upstream_sha }}
+          BEHIND: ${{ steps.check.outputs.behind }}
         with:
           script: |
-            const title = `Upstream sync conflicts (behind by ${{ steps.check.outputs.behind }} commits)`;
-            const commitSummary = `${{ steps.summary.outputs.summary }}`;
+            const upstreamShort = process.env.UPSTREAM_SHORT;
+            const upstreamSha = process.env.UPSTREAM_SHA;
+            const behind = process.env.BEHIND;
+            const commitSummary = process.env.COMMIT_SUMMARY || '';
+
+            const title = `Upstream sync conflicts (behind by ${behind} commits)`;
             const body = [
-              `Automated sync from [tiann/hapi@${{ steps.check.outputs.upstream_short }}](https://github.com/tiann/hapi/commit/${{ steps.check.outputs.upstream_sha }}) failed with merge conflicts.`,
+              `Automated sync from [tiann/hapi@${upstreamShort}](https://github.com/tiann/hapi/commit/${upstreamSha}) failed with merge conflicts.`,
               ``,
               `### New upstream commits`,
               commitSummary,
               ``,
               `### Resolve manually`,
-              `\`\`\`bash`,
+              '```bash',
               `git fetch upstream main`,
               `git checkout main`,
               `git merge upstream/main`,
               `# resolve conflicts`,
               `bun install && bun run typecheck && bun run test`,
               `git push origin main`,
-              `\`\`\``,
+              '```',
+              ``,
+              `Or use the interactive helper:`,
+              '```bash',
+              `scripts/upstream-sync.sh`,
+              '```',
               ``,
               `This issue was opened automatically by \`.github/workflows/upstream-sync.yml\`. It will not be reopened while an open issue with the \`upstream-sync,conflict\` labels already exists.`,
             ].join('\n');
