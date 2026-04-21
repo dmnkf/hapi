@@ -39,6 +39,47 @@ npm install -g @dmnkf/hapi
 
 Prebuilt binaries for Linux, macOS, and Windows are available on the [releases page](https://github.com/dmnkf/hapi/releases).
 
+## Migrating from upstream
+
+Already using the upstream `tiann/hapi`? This fork is a **drop-in replacement** — same `hapi` binary name, same `~/.hapi` config directory, same `HAPI_*` env vars, same DB schema. Your existing sessions, auth tokens, JWT secret, and settings all keep working. Only the installation source changes.
+
+### If you installed via `curl | bash` or manual download
+
+Just run the fork's install script — it overwrites the binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dmnkf/hapi/main/scripts/install.sh | bash
+hapi --version   # should print 0.17.0-dmnkf.1 or later
+```
+
+### If you installed via npm
+
+```bash
+npm uninstall -g @twsxtd/hapi
+npm install -g @dmnkf/hapi
+```
+
+### If you installed via Homebrew
+
+The fork doesn't ship a Homebrew tap. Uninstall the upstream formula and switch to the install script or npm:
+
+```bash
+brew uninstall hapi
+curl -fsSL https://raw.githubusercontent.com/dmnkf/hapi/main/scripts/install.sh | bash
+```
+
+### Update running services
+
+If you run `hapi hub` / `hapi runner` under launchd, systemd, or pm2, the service files reference the old binary path. After reinstalling:
+
+```bash
+which hapi                       # confirm new binary location
+# Update your launchd plist / systemd unit / pm2 config to point here
+# Then restart the service
+```
+
+No data migration, no re-auth, no session re-creation needed.
+
 ## Getting Started
 
 ```bash
