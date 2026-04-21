@@ -11,9 +11,16 @@ permissions:
 jobs:
     release:
         runs-on: ubuntu-latest
+        env:
+            # Gate npm publish on presence of secret (empty string if secret is unset)
+            NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         steps:
             - uses: actions/checkout@v4
             - uses: oven-sh/setup-bun@v2
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: '20'
+                  registry-url: 'https://registry.npmjs.org'
             - run: bun install
             - run: bun run build:single-exe:all
             - name: Package release artifacts
@@ -44,6 +51,26 @@ jobs:
                       --title "Release ${GITHUB_REF#refs/tags/}" \
                       --generate-notes \
                       cli/release-artifacts/*
+            - name: Prepare npm packages
+              if: ${{ env.NPM_TOKEN != '' }}
+              working-directory: cli
+              run: bun run prepare-npm-packages
+            - name: Publish platform packages to npm
+              if: ${{ env.NPM_TOKEN != '' }}
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
+                      echo ">>> Publishing @dmnkf/hapi-$platform"
+                      (cd cli/npm/$platform && npm publish --access public) || echo "Skipping $platform (may already be published)"
+                  done
+            - name: Publish main npm package
+              if: ${{ env.NPM_TOKEN != '' }}
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  echo ">>> Publishing @dmnkf/hapi"
+                  (cd cli/npm/main && npm publish --access public) || echo "Skipping main (may already be published)"
             - name: Update Homebrew formula
               continue-on-error: true
               env:

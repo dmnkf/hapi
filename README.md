@@ -1,6 +1,8 @@
-# HAPI
+# HAPI (dmnkf fork)
 
 Run official Claude Code / Codex / Gemini / OpenCode sessions locally and control them remotely through a Web / PWA / Telegram Mini App.
+
+> **Fork notice**: This is [@dmnkf](https://github.com/dmnkf)'s fork of [tiann/hapi](https://github.com/tiann/hapi) with redesigned PWA UX, terminal stability fixes, machine-wide directory browsing, and Linux-first deployment. See [upstream](https://github.com/tiann/hapi) for the original project.
 
 > **Why HAPI?** HAPI is a local-first alternative to Happy. See [Why Not Happy?](docs/guide/why-hapi.md) for the key differences.
 
@@ -17,11 +19,31 @@ Run official Claude Code / Codex / Gemini / OpenCode sessions locally and contro
 
 https://github.com/user-attachments/assets/38230353-94c6-4dbe-9c29-b2a2cc457546
 
+## Install
+
+### Linux / macOS (one-liner, no Node.js required)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dmnkf/hapi/main/scripts/install.sh | bash
+```
+
+Installs to `~/.local/bin/hapi`. For system-wide install: `curl -fsSL ... | HAPI_SYSTEM=1 bash`.
+
+### via npm (cross-platform)
+
+```bash
+npm install -g @dmnkf/hapi
+```
+
+### Manual download
+
+Prebuilt binaries for Linux, macOS, and Windows are available on the [releases page](https://github.com/dmnkf/hapi/releases).
+
 ## Getting Started
 
 ```bash
-npx @twsxtd/hapi hub --relay     # start hub with E2E encrypted relay
-npx @twsxtd/hapi                 # run claude code
+hapi hub --relay     # start hub with E2E encrypted relay
+hapi                 # run claude code
 ```
 
 `hapi server` remains supported as an alias.
@@ -50,4 +72,4 @@ bun run build:single-exe
 
 ## Credits
 
-HAPI means "哈皮" a Chinese transliteration of [Happy](https://github.com/slopus/happy). Great credit to the original project.
+HAPI means "哈皮" a Chinese transliteration of [Happy](https://github.com/slopus/happy). Great credit to the original project and to [tiann/hapi](https://github.com/tiann/hapi) (the upstream this fork is based on).
