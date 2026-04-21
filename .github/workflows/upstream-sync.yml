@@ -129,7 +129,7 @@ jobs:
             gh pr create --title "${title}" --body "${body}" --base main --head upstream-sync --label upstream-sync
           fi
 
-      - name: Open conflict issue
+      - name: Report conflicts (issue, or summary fallback)
         if: steps.check.outputs.needs_sync == 'true' && steps.merge.outputs.conflicts == 'true'
         uses: actions/github-script@v7
         env:
@@ -165,35 +165,51 @@ jobs:
               '```bash',
               `scripts/upstream-sync.sh`,
               '```',
-              ``,
-              `This issue was opened automatically by \`.github/workflows/upstream-sync.yml\`. It will not be reopened while an open issue with the \`upstream-sync,conflict\` labels already exists.`,
             ].join('\n');
 
-            const { data: existing } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              labels: 'upstream-sync,conflict',
-              state: 'open',
-            });
+            // Try to open/update an issue. If issues are disabled on the
+            // repository, fall back to writing the full report to the
+            // workflow summary.
+            try {
+              const { data: existing } = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: 'upstream-sync,conflict',
+                state: 'open',
+              });
 
-            if (existing.length > 0) {
-              core.info(`Conflict issue #${existing[0].number} already open, updating body`);
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: existing[0].number,
-                title,
-                body,
-              });
-            } else {
-              const { data: created } = await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title,
-                body,
-                labels: ['upstream-sync', 'conflict'],
-              });
-              core.info(`Opened issue #${created.number}`);
+              if (existing.length > 0) {
+                core.info(`Conflict issue #${existing[0].number} already open, updating body`);
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing[0].number,
+                  title,
+                  body: body + `\n\nThis issue was opened automatically by \`.github/workflows/upstream-sync.yml\`.`,
+                });
+              } else {
+                const { data: created } = await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title,
+                  body: body + `\n\nThis issue was opened automatically by \`.github/workflows/upstream-sync.yml\`.`,
+                  labels: ['upstream-sync', 'conflict'],
+                });
+                core.info(`Opened issue #${created.number}`);
+              }
+              core.exportVariable('CONFLICT_REPORT_TARGET', 'issue');
+            } catch (err) {
+              const disabled = /Issues has been disabled/i.test(err.message || '') || err.status === 410;
+              if (!disabled) {
+                core.warning(`Unexpected error creating issue: ${err.message}`);
+              } else {
+                core.info('Issues are disabled on this repo — writing conflict report to workflow summary instead.');
+              }
+              core.exportVariable('CONFLICT_REPORT_TARGET', 'summary');
+              await core.summary
+                .addHeading(title, 3)
+                .addRaw(body, true)
+                .write();
             }
 
       - name: Summary
@@ -204,7 +220,11 @@ jobs:
           if [ "${{ steps.check.outputs.needs_sync }}" != "true" ]; then
             echo "Fork is already up to date with upstream (${{ steps.check.outputs.upstream_short }})." >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ steps.merge.outputs.conflicts }}" = "true" ]; then
-            echo "Conflicts detected — opened an issue for manual resolution." >> "$GITHUB_STEP_SUMMARY"
+            if [ "${CONFLICT_REPORT_TARGET:-summary}" = "issue" ]; then
+              echo "Conflicts detected — opened/updated tracking issue." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Conflicts detected — details in the section above (issues are disabled on this repo)." >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
             echo "Clean merge — opened/updated PR from \`upstream-sync\` branch." >> "$GITHUB_STEP_SUMMARY"
           fi
