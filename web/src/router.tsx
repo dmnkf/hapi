@@ -1,6 +1,8 @@
 import { useCallback, useMemo } from 'react'
+import type { CSSProperties } from 'react'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
+import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { useQueryClient } from '@tanstack/react-query'
 import {
     Navigate,
@@ -33,6 +35,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
+import { clearDraftsAfterSend } from '@/lib/clearDraftsAfterSend'
 import type { Machine } from '@/types/api'
 import { SessionTabBar } from '@/components/SessionTabBar'
 import FilesPage from '@/routes/sessions/files'
@@ -117,6 +120,7 @@ function SessionsPage() {
     const handleRefresh = useCallback(() => {
         void refetch()
     }, [refetch])
+    const sidebar = useSidebarResize()
     const {
         containerRef: pullRef,
         pullDistance,
@@ -153,7 +157,10 @@ function SessionsPage() {
 
     return (
         <div className="flex h-full min-h-0">
-            <div className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} w-full lg:w-[340px] xl:w-[380px] shrink-0 flex-col bg-[var(--app-bg)] lg:border-r lg:border-[var(--app-divider)]`}>
+            <div
+                className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} w-full shrink-0 flex-col bg-[var(--app-bg)]`}
+                style={{ '--sidebar-w': `${sidebar.width}px` } as CSSProperties}
+            >
                 <div className="glass-bar sticky top-0 z-20 border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
                     <div className="mx-auto w-full max-w-content px-3 py-2">
                         <div className="flex items-center justify-between">
@@ -265,6 +272,13 @@ function SessionsPage() {
                 </div>
             </div>
 
+            {/* Resize handle - desktop only */}
+            <div
+                className="sidebar-resize-handle hidden lg:block shrink-0"
+                data-dragging={sidebar.isDragging || undefined}
+                onPointerDown={sidebar.onPointerDown}
+            />
+
             <div className={`${isSessionsIndex ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
                 <div className="flex-1 min-h-0">
                     <Outlet />
@@ -308,6 +322,10 @@ function SessionPage() {
         retryMessage,
         isSending,
     } = useSendMessage(api, sessionId, {
+        isSessionThinking: session?.thinking ?? false,
+        onSuccess: (sentSessionId) => {
+            clearDraftsAfterSend(sentSessionId, sessionId)
+        },
         resolveSessionId: async (currentSessionId) => {
             if (!api || !session || session.active) {
                 return currentSessionId

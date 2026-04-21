@@ -303,6 +303,7 @@ export default {
   'misc.permissionMode': '\u6743\u9650\u6a21\u5f0f',
   'misc.model': '\u6a21\u578b',
   'misc.effort': '\u601d\u8003\u5f3a\u5ea6',
+  'misc.reasoningEffort': '\u63a8\u7406\u5f3a\u5ea6',
   'misc.loading': '\u52a0\u8f7d\u4e2d\u2026',
   'misc.loadOlder': '\u52a0\u8f7d\u66f4\u65e9\u7684',
   'misc.newMessage': '{n} \u6761\u65b0\u6d88\u606f',
