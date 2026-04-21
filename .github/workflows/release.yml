@@ -15,7 +15,7 @@ jobs:
             # Gate npm publish on presence of secret (empty string if secret is unset)
             NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v6
             - uses: oven-sh/setup-bun@v2
             - uses: actions/setup-node@v4
               with:
