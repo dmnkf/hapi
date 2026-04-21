@@ -33,6 +33,9 @@ jobs:
                       # bun-darwin-arm64 -> hapi-darwin-arm64
                       name="hapi-${target#bun-}"
                       name="${name/windows/win32}"
+                      # Strip Bun build variant suffixes (e.g. linux-x64-baseline -> linux-x64)
+                      name="${name%-baseline}"
+                      name="${name%-modern}"
 
                       if [[ "$target" == *"windows"* ]]; then
                           zip -j "../release-artifacts/${name}.zip" "$target"/hapi.exe
