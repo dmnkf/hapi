@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ApiClient } from '@/api/client'
-import type { Machine } from '@/types/api'
+import type { DirectoryEntry, Machine } from '@/types/api'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useMachinePathsExists } from '@/hooks/useMachinePathsExists'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
@@ -45,6 +45,73 @@ function getMachineTitle(machine: Machine): string {
     return machine.id.slice(0, 8)
 }
 
+function getDefaultBrowsePath(machine: Machine | null): string {
+    return machine?.metadata?.platform === 'win32' ? 'C:\\' : '/'
+}
+
+function getPathSeparator(machine: Machine | null, path: string): '/' | '\\' {
+    if (path.includes('\\')) return '\\'
+    if (machine?.metadata?.platform === 'win32') return '\\'
+    return '/'
+}
+
+function getDirectoryLookupTarget(
+    query: string,
+    machine: Machine | null
+): { directoryPath: string; fragment: string; separator: '/' | '\\' } | null {
+    const trimmed = query.trim()
+
+    if (!trimmed) {
+        const directoryPath = getDefaultBrowsePath(machine)
+        return {
+            directoryPath,
+            fragment: '',
+            separator: getPathSeparator(machine, directoryPath)
+        }
+    }
+
+    if (/^[A-Za-z]:$/.test(trimmed)) {
+        const directoryPath = `${trimmed}\\`
+        return {
+            directoryPath,
+            fragment: '',
+            separator: '\\'
+        }
+    }
+
+    if (trimmed.endsWith('/') || trimmed.endsWith('\\')) {
+        return {
+            directoryPath: trimmed,
+            fragment: '',
+            separator: getPathSeparator(machine, trimmed)
+        }
+    }
+
+    const lastSeparator = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+    if (lastSeparator < 0) {
+        return null
+    }
+
+    const directoryPath = trimmed.slice(0, lastSeparator + 1)
+    return {
+        directoryPath,
+        fragment: trimmed.slice(lastSeparator + 1),
+        separator: getPathSeparator(machine, directoryPath)
+    }
+}
+
+function joinDirectoryPath(directoryPath: string, name: string, separator: '/' | '\\'): string {
+    if (directoryPath === separator) {
+        return `${directoryPath}${name}`
+    }
+
+    if (directoryPath.endsWith('/') || directoryPath.endsWith('\\')) {
+        return `${directoryPath}${name}`
+    }
+
+    return `${directoryPath}${separator}${name}`
+}
+
 export function NewSession(props: {
     api: ApiClient
     machines: Machine[]
@@ -75,6 +142,7 @@ export function NewSession(props: {
     const [error, setError] = useState<string | null>(null)
     const [showAdvanced, setShowAdvanced] = useState(loadShowAdvanced)
     const worktreeInputRef = useRef<HTMLInputElement>(null)
+    const machineDirectoryCacheRef = useRef(new Map<string, DirectoryEntry[]>())
 
     // Smart default: single machine auto-select
     const isSingleMachine = props.machines.length === 1
@@ -168,9 +236,13 @@ export function NewSession(props: {
         setDirectoryCreationConfirmed(false)
     }, [machineId, sessionType, trimmedDirectory])
 
+    useEffect(() => {
+        machineDirectoryCacheRef.current.clear()
+    }, [machineId])
+
     const getSuggestions = useCallback(async (query: string): Promise<Suggestion[]> => {
         const lowered = query.toLowerCase()
-        return verifiedPaths
+        const localSuggestions = verifiedPaths
             .filter((path) => path.toLowerCase().includes(lowered))
             .slice(0, 8)
             .map((path) => ({
@@ -178,7 +250,53 @@ export function NewSession(props: {
                 text: path,
                 label: path
             }))
-    }, [verifiedPaths])
+
+        if (!machineId) {
+            return localSuggestions
+        }
+
+        const lookupTarget = getDirectoryLookupTarget(query, selectedMachine)
+        if (!lookupTarget) {
+            return localSuggestions
+        }
+
+        const cacheKey = `${machineId}:${lookupTarget.directoryPath}`
+        let entries = machineDirectoryCacheRef.current.get(cacheKey)
+
+        if (!entries) {
+            const response = await props.api.listMachineDirectory(machineId, lookupTarget.directoryPath)
+            if (!response.success) {
+                return localSuggestions
+            }
+
+            entries = (response.entries ?? []).filter((entry) => entry.type === 'directory')
+            machineDirectoryCacheRef.current.set(cacheKey, entries)
+        }
+
+        const remoteSuggestions = entries
+            .filter((entry) => lookupTarget.fragment === '' || entry.name.toLowerCase().includes(lookupTarget.fragment.toLowerCase()))
+            .slice(0, 12)
+            .map((entry) => {
+                const fullPath = joinDirectoryPath(lookupTarget.directoryPath, entry.name, lookupTarget.separator)
+                const browsablePath = `${fullPath}${lookupTarget.separator}`
+                return {
+                    key: `machine-directory:${browsablePath}`,
+                    text: browsablePath,
+                    label: browsablePath,
+                    description: selectedMachine ? getMachineTitle(selectedMachine) : undefined
+                }
+            })
+
+        const mergedSuggestions = new Map<string, Suggestion>()
+        for (const suggestion of localSuggestions) {
+            mergedSuggestions.set(suggestion.text, suggestion)
+        }
+        for (const suggestion of remoteSuggestions) {
+            mergedSuggestions.set(suggestion.text, suggestion)
+        }
+
+        return Array.from(mergedSuggestions.values()).slice(0, 12)
+    }, [verifiedPaths, machineId, selectedMachine, props.api])
 
     const activeQuery = (!isDirectoryFocused || suppressSuggestions) ? null : directory
 
