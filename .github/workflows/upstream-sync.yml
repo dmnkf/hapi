@@ -1,0 +1,196 @@
+name: Sync with upstream
+
+on:
+  schedule:
+    # Daily at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Open PR even if commits count is 0 (useful for rebuilding a stale sync branch)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use default GITHUB_TOKEN. Note: PRs created with GITHUB_TOKEN
+          # won't trigger other workflows (e.g. Test). Re-trigger CI
+          # manually on the PR by closing/reopening, or swap to a PAT in
+          # repo secrets as SYNC_PAT and reference it here for full CI.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/tiann/hapi.git
+          git fetch upstream main --no-tags
+
+      - name: Check if sync needed
+        id: check
+        run: |
+          behind=$(git rev-list --count HEAD..upstream/main)
+          upstream_sha=$(git rev-parse upstream/main)
+          upstream_short=$(git rev-parse --short upstream/main)
+          echo "behind=${behind}" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=${upstream_sha}" >> "$GITHUB_OUTPUT"
+          echo "upstream_short=${upstream_short}" >> "$GITHUB_OUTPUT"
+
+          if [ "${behind}" -eq 0 ] && [ "${{ inputs.force }}" != "true" ]; then
+            echo "needs_sync=false" >> "$GITHUB_OUTPUT"
+            echo "Fork is up to date with upstream (${upstream_short})"
+          else
+            echo "needs_sync=true" >> "$GITHUB_OUTPUT"
+            echo "Fork is behind by ${behind} commit(s). Latest upstream: ${upstream_short}"
+          fi
+
+      - name: Collect commit summary
+        id: summary
+        if: steps.check.outputs.needs_sync == 'true'
+        run: |
+          {
+            echo "summary<<EOF_SUMMARY"
+            git log --pretty=format:'- %h %s (%an)' HEAD..upstream/main | head -50
+            echo ""
+            echo "EOF_SUMMARY"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attempt merge into sync branch
+        id: merge
+        if: steps.check.outputs.needs_sync == 'true'
+        run: |
+          # Start from fork's main, create/reset sync branch, attempt merge
+          git checkout -B upstream-sync origin/main
+
+          if git merge --no-edit --no-ff upstream/main -m "chore: sync with upstream ${{ steps.check.outputs.upstream_short }}"; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+            echo "Clean merge"
+          else
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            git merge --abort
+            echo "Merge has conflicts — will open issue instead of PR"
+          fi
+
+      - name: Push sync branch
+        if: steps.check.outputs.needs_sync == 'true' && steps.merge.outputs.conflicts == 'false'
+        run: git push origin upstream-sync --force-with-lease
+
+      - name: Open or update PR (clean merge)
+        if: steps.check.outputs.needs_sync == 'true' && steps.merge.outputs.conflicts == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="chore: sync with upstream (${{ steps.check.outputs.behind }} commits, ${{ steps.check.outputs.upstream_short }})"
+          body=$(cat <<'BODY'
+          Automated sync from [tiann/hapi@main](https://github.com/tiann/hapi/tree/main).
+
+          Pulling **${{ steps.check.outputs.behind }}** new commits up to `${{ steps.check.outputs.upstream_short }}`.
+
+          ### Commits included
+          ${{ steps.summary.outputs.summary }}
+
+          ### Review checklist
+          - [ ] CI is green (may need to re-trigger by closing/reopening this PR — GITHUB_TOKEN PRs don't auto-trigger workflows)
+          - [ ] No regressions to fork-specific changes:
+            - `@dmnkf` npm scope in `cli/package.json` preserved
+            - PWA redesign (SessionList, SessionHeader, SessionTabBar) intact
+            - Terminal stability fixes preserved
+            - Release workflow (`.github/workflows/release.yml`) npm publish step preserved
+          - [ ] Version bumped appropriately if upstream bumped theirs
+
+          This PR was created automatically by `.github/workflows/upstream-sync.yml`.
+          BODY
+          )
+
+          existing=$(gh pr list --head upstream-sync --base main --state open --json number --jq '.[0].number' || echo "")
+          if [ -n "${existing}" ]; then
+            echo "Updating existing PR #${existing}"
+            gh pr edit "${existing}" --title "${title}" --body "${body}"
+          else
+            echo "Creating new PR"
+            gh pr create --title "${title}" --body "${body}" --base main --head upstream-sync --label upstream-sync
+          fi
+
+      - name: Open conflict issue
+        if: steps.check.outputs.needs_sync == 'true' && steps.merge.outputs.conflicts == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `Upstream sync conflicts (behind by ${{ steps.check.outputs.behind }} commits)`;
+            const commitSummary = `${{ steps.summary.outputs.summary }}`;
+            const body = [
+              `Automated sync from [tiann/hapi@${{ steps.check.outputs.upstream_short }}](https://github.com/tiann/hapi/commit/${{ steps.check.outputs.upstream_sha }}) failed with merge conflicts.`,
+              ``,
+              `### New upstream commits`,
+              commitSummary,
+              ``,
+              `### Resolve manually`,
+              `\`\`\`bash`,
+              `git fetch upstream main`,
+              `git checkout main`,
+              `git merge upstream/main`,
+              `# resolve conflicts`,
+              `bun install && bun run typecheck && bun run test`,
+              `git push origin main`,
+              `\`\`\``,
+              ``,
+              `This issue was opened automatically by \`.github/workflows/upstream-sync.yml\`. It will not be reopened while an open issue with the \`upstream-sync,conflict\` labels already exists.`,
+            ].join('\n');
+
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'upstream-sync,conflict',
+              state: 'open',
+            });
+
+            if (existing.length > 0) {
+              core.info(`Conflict issue #${existing[0].number} already open, updating body`);
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing[0].number,
+                title,
+                body,
+              });
+            } else {
+              const { data: created } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['upstream-sync', 'conflict'],
+              });
+              core.info(`Opened issue #${created.number}`);
+            }
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Upstream sync result" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.check.outputs.needs_sync }}" != "true" ]; then
+            echo "Fork is already up to date with upstream (${{ steps.check.outputs.upstream_short }})." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ steps.merge.outputs.conflicts }}" = "true" ]; then
+            echo "Conflicts detected — opened an issue for manual resolution." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Clean merge — opened/updated PR from \`upstream-sync\` branch." >> "$GITHUB_STEP_SUMMARY"
+          fi

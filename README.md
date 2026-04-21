@@ -80,6 +80,21 @@ which hapi                       # confirm new binary location
 
 No data migration, no re-auth, no session re-creation needed.
 
+## Staying in sync with upstream
+
+The fork automatically checks [tiann/hapi](https://github.com/tiann/hapi) daily (`.github/workflows/upstream-sync.yml`). When new upstream commits exist:
+
+- **Clean merge** → opens a PR on this fork titled `chore: sync with upstream (...)` for review
+- **Merge conflicts** → opens an issue labelled `upstream-sync,conflict` listing the new commits and resolution steps
+
+To sync manually at any time:
+
+```bash
+scripts/upstream-sync.sh    # interactive: preview, merge, validate
+```
+
+The workflow also supports manual dispatch: go to **Actions → Sync with upstream → Run workflow** on GitHub.
+
 ## Getting Started
 
 ```bash
