@@ -86,21 +86,31 @@ describe('AcpSdkBackend', () => {
         };
 
         const messages: AgentMessage[] = [];
+
+        // Deterministic sequencing (no real-time setTimeout fragility): the
+        // mock sendRequest emits the mid-turn chunk first, schedules the
+        // trailing tool events via queueMicrotask to deliver them AFTER
+        // sendRequest's promise resolves but BEFORE the post-prompt drain
+        // exits, and then returns the stop reason. This reproduces
+        // "trailing tool updates arriving after sendRequest returns but
+        // within the drain window" without relying on wall-clock timing
+        // that jitters on slow CI runners.
         backendInternal.transport = {
             sendRequest: async () => {
-                setTimeout(() => {
-                    backendInternal.handleSessionUpdate({
-                        sessionId: 'session-1',
-                        update: {
-                            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
-                            content: { type: 'text', text: 'final answer' }
-                        }
-                    });
-                }, 0);
+                // Emit mid-turn chunk
+                backendInternal.handleSessionUpdate({
+                    sessionId: 'session-1',
+                    update: {
+                        sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+                        content: { type: 'text', text: 'final answer' }
+                    }
+                });
 
-                await sleep(5);
-
-                setTimeout(() => {
+                // Queue trailing tool events on microtask queue. These will
+                // fire AFTER this async function's return value settles
+                // but still before prompt()'s drain loop completes its
+                // first quiet-check setTimeout.
+                queueMicrotask(() => {
                     backendInternal.handleSessionUpdate({
                         sessionId: 'session-1',
                         update: {
@@ -111,9 +121,6 @@ describe('AcpSdkBackend', () => {
                             status: 'in_progress'
                         }
                     });
-                }, 3);
-
-                setTimeout(() => {
                     backendInternal.handleSessionUpdate({
                         sessionId: 'session-1',
                         update: {
@@ -123,7 +130,7 @@ describe('AcpSdkBackend', () => {
                             rawOutput: { ok: true }
                         }
                     });
-                }, 6);
+                });
 
                 return { stopReason: 'end_turn' };
             },
