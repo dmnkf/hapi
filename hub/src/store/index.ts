@@ -98,69 +98,36 @@ export class Store {
             return
         }
 
-        if (currentVersion === 1 && SCHEMA_VERSION === 2) {
-            this.migrateFromV1ToV2()
-            this.setUserVersion(SCHEMA_VERSION)
+        if (currentVersion === SCHEMA_VERSION) {
+            this.assertRequiredTablesPresent()
             return
         }
 
-        if (currentVersion === 2 && SCHEMA_VERSION === 3) {
-            this.migrateFromV2ToV3()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
-        }
-
-        if (currentVersion === 3 && SCHEMA_VERSION === 4) {
-            this.migrateFromV3ToV4()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
-        }
-
-        if (currentVersion === 4 && SCHEMA_VERSION === 5) {
-            this.migrateFromV4ToV5()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
-        }
-
-        if (currentVersion === 5 && SCHEMA_VERSION === 6) {
-            this.migrateFromV5ToV6()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
-        }
-
-        if (currentVersion === 6 && SCHEMA_VERSION === 7) {
-            this.migrateFromV6ToV7()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
-        }
-
-        if (currentVersion === 4 && SCHEMA_VERSION === 6) {
-            this.migrateFromV4ToV5()
-            this.migrateFromV5ToV6()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
-        }
-
-        if (currentVersion === 4 && SCHEMA_VERSION === 7) {
-            this.migrateFromV4ToV5()
-            this.migrateFromV5ToV6()
-            this.migrateFromV6ToV7()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
-        }
-
-        if (currentVersion === 5 && SCHEMA_VERSION === 7) {
-            this.migrateFromV5ToV6()
-            this.migrateFromV6ToV7()
-            this.setUserVersion(SCHEMA_VERSION)
-            return
-        }
-
-        if (currentVersion !== SCHEMA_VERSION) {
+        if (currentVersion > SCHEMA_VERSION) {
             throw this.buildSchemaMismatchError(currentVersion)
         }
 
+        this.runForwardMigrations(currentVersion)
+        this.setUserVersion(SCHEMA_VERSION)
         this.assertRequiredTablesPresent()
+    }
+
+    private runForwardMigrations(fromVersion: number): void {
+        const steps: Record<number, () => void> = {
+            1: () => this.migrateFromV1ToV2(),
+            2: () => this.migrateFromV2ToV3(),
+            3: () => this.migrateFromV3ToV4(),
+            4: () => this.migrateFromV4ToV5(),
+            5: () => this.migrateFromV5ToV6(),
+            6: () => this.migrateFromV6ToV7(),
+        }
+        for (let v = fromVersion; v < SCHEMA_VERSION; v++) {
+            const step = steps[v]
+            if (!step) {
+                throw this.buildSchemaMismatchError(fromVersion)
+            }
+            step()
+        }
     }
 
     private createSchema(): void {
