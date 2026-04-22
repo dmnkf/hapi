@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation, type Locale } from '@/lib/use-translation'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
+import { clearAppCacheAndReload } from '@/lib/clearAppCache'
 import { getElevenLabsSupportedLanguages, getLanguageDisplayName, type Language } from '@/lib/languages'
 import { getFontScaleOptions, useFontScale, type FontScale } from '@/hooks/useFontScale'
 import { getTerminalFontSizeOptions, useTerminalFontSize, type TerminalFontSize } from '@/hooks/useTerminalFontSize'
@@ -92,6 +93,13 @@ export default function SettingsPage() {
     const [voiceLanguage, setVoiceLanguage] = useState<string | null>(() => {
         return localStorage.getItem('hapi-voice-lang')
     })
+
+    const [isClearingCache, setIsClearingCache] = useState(false)
+    const handleClearCache = async () => {
+        if (isClearingCache) return
+        setIsClearingCache(true)
+        await clearAppCacheAndReload()
+    }
 
     const fontScaleOptions = getFontScaleOptions()
     const terminalFontSizeOptions = getTerminalFontSizeOptions()
@@ -460,6 +468,26 @@ export default function SettingsPage() {
                                     })}
                                 </div>
                             )}
+                        </div>
+                    </div>
+
+                    {/* Cache section */}
+                    <div className="border-b border-[var(--app-divider)]">
+                        <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
+                            {t('settings.cache.title')}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleClearCache}
+                            disabled={isClearingCache}
+                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)] disabled:opacity-60 disabled:cursor-progress"
+                        >
+                            <span className="text-[var(--app-link)]">
+                                {isClearingCache ? t('settings.cache.clearing') : t('settings.cache.clear')}
+                            </span>
+                        </button>
+                        <div className="px-3 pb-3 text-xs text-[var(--app-hint)]">
+                            {t('settings.cache.description')}
                         </div>
                     </div>
 

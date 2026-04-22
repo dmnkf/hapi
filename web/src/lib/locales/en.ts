@@ -293,6 +293,10 @@ export default {
   'settings.about.website': 'Website',
   'settings.about.appVersion': 'App Version',
   'settings.about.protocolVersion': 'Protocol Version',
+  'settings.cache.title': 'Cache',
+  'settings.cache.clear': 'Clear cache & reload',
+  'settings.cache.clearing': 'Clearing…',
+  'settings.cache.description': 'Purges offline assets and unregisters the service worker, then reloads. Your sign-in and preferences are kept.',
 
   // Misc
   'misc.noMachines': 'No machines available',

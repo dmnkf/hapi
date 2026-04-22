@@ -295,6 +295,10 @@ export default {
   'settings.about.website': '\u5b98\u65b9\u7f51\u7ad9',
   'settings.about.appVersion': '\u5e94\u7528\u7248\u672c',
   'settings.about.protocolVersion': '\u534f\u8bae\u7248\u672c',
+  'settings.cache.title': '\u7f13\u5b58',
+  'settings.cache.clear': '\u6e05\u9664\u7f13\u5b58\u5e76\u91cd\u65b0\u52a0\u8f7d',
+  'settings.cache.clearing': '\u6e05\u9664\u4e2d\u2026',
+  'settings.cache.description': '\u6e05\u9664\u79bb\u7ebf\u8d44\u6e90\u5e76\u53d6\u6d88\u6ce8\u518c service worker\uff0c\u7136\u540e\u91cd\u65b0\u52a0\u8f7d\u3002\u767b\u5f55\u548c\u504f\u597d\u8bbe\u7f6e\u4f1a\u4fdd\u7559\u3002',
 
   // Misc
   'misc.noMachines': '\u65e0\u53ef\u7528\u673a\u5668',
