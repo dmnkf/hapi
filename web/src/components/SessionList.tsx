@@ -80,11 +80,20 @@ export function deduplicateSessionsByAgentId(
     return result
 }
 
+function getGroupingPath(session: SessionSummary): string {
+    return (
+        session.metadata?.worktree?.worktreePath
+        ?? session.metadata?.path
+        ?? session.metadata?.worktree?.basePath
+        ?? 'Other'
+    )
+}
+
 function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
     const groups = new Map<string, { directory: string; machineId: string | null; sessions: SessionSummary[] }>()
 
     sessions.forEach(session => {
-        const path = session.metadata?.worktree?.basePath ?? session.metadata?.path ?? 'Other'
+        const path = getGroupingPath(session)
         const machineId = session.metadata?.machineId ?? null
         const key = `${machineId ?? UNKNOWN_MACHINE_ID}::${path}`
         if (!groups.has(key)) {
@@ -110,12 +119,19 @@ function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
                 -Infinity
             )
             const hasActiveSession = group.sessions.some(s => s.active)
-            const { name, subtitle } = getGroupDisplayName(group.directory)
+            const worktree = group.sessions[0]?.metadata?.worktree
+            const allShareWorktree = worktree
+                ? group.sessions.every(s => s.metadata?.worktree?.worktreePath === worktree.worktreePath)
+                : false
+            const { name: baseName, subtitle } = getGroupDisplayName(group.directory)
+            const displayName = allShareWorktree && worktree
+                ? (worktree.name || worktree.branch || baseName)
+                : baseName
 
             return {
                 key,
                 directory: group.directory,
-                displayName: name,
+                displayName,
                 pathSubtitle: subtitle,
                 machineId: group.machineId,
                 sessions: sortedSessions,
