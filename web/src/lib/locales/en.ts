@@ -61,6 +61,7 @@ export default {
   'sessions.filter.active': 'Active',
   'sessions.filter.pending': 'Pending',
   'sessions.filter.inactive': 'Inactive',
+  'sessions.machine.all': 'All machines',
   'session.time.justNow': 'just now',
   'session.time.minutesAgo': '{n}m ago',
   'session.time.hoursAgo': '{n}h ago',

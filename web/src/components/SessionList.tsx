@@ -22,8 +22,11 @@ type SessionGroup = {
 }
 
 type StatusFilter = 'all' | 'active' | 'pending' | 'inactive'
+type MachineFilter = 'all' | string
 
 const FILTER_STORAGE_KEY = 'hapi:sessionFilter'
+const MACHINE_FILTER_STORAGE_KEY = 'hapi:sessionMachineFilter'
+const UNKNOWN_MACHINE_FILTER_KEY = '__unknown__'
 
 const COMMON_LEAF_DIRS = new Set([
     'src', 'app', 'lib', 'bin', 'cmd', 'pkg', 'dist', 'build', 'out',
@@ -318,6 +321,59 @@ function loadSavedFilter(): StatusFilter {
         }
     } catch { /* ignore */ }
     return 'all'
+}
+
+// --- Machine Filter Bar ---
+
+type MachineEntry = { id: string | null; label: string; count: number }
+
+function MachineFilterBar(props: {
+    machines: MachineEntry[]
+    filter: MachineFilter
+    totalCount: number
+    onFilterChange: (f: MachineFilter) => void
+}) {
+    const { machines, filter, totalCount, onFilterChange } = props
+    const { t } = useTranslation()
+
+    const chips: { key: MachineFilter; label: string; count: number }[] = [
+        { key: 'all', label: t('sessions.machine.all'), count: totalCount },
+        ...machines.map(m => ({
+            key: (m.id ?? UNKNOWN_MACHINE_FILTER_KEY) as MachineFilter,
+            label: m.label,
+            count: m.count,
+        })),
+    ]
+
+    return (
+        <div className="flex gap-2 overflow-x-auto px-3 py-2 scrollbar-none">
+            {chips.map(chip => {
+                const isSelected = filter === chip.key
+                return (
+                    <button
+                        key={chip.key}
+                        type="button"
+                        onClick={() => onFilterChange(chip.key)}
+                        title={chip.label}
+                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors max-w-[220px] ${
+                            isSelected
+                                ? 'bg-[var(--app-fg)] text-[var(--app-bg)]'
+                                : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                        }`}
+                    >
+                        <span className="truncate">{chip.label}</span>
+                        <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold leading-none shrink-0 ${
+                            isSelected
+                                ? 'bg-[var(--app-bg)] text-[var(--app-fg)]'
+                                : 'bg-[var(--app-border)] text-[var(--app-hint)]'
+                        }`}>
+                            {chip.count}
+                        </span>
+                    </button>
+                )
+            })}
+        </div>
+    )
 }
 
 // --- Filter Bar ---
@@ -714,12 +770,60 @@ export function SessionList(props: {
         try { localStorage.setItem(FILTER_STORAGE_KEY, f) } catch { /* ignore */ }
     }
 
+    // --- Machine filter state ---
+    const [machineFilter, setMachineFilter] = useState<MachineFilter>(() => {
+        try {
+            const stored = localStorage.getItem(MACHINE_FILTER_STORAGE_KEY)
+            return stored && stored.length > 0 ? stored : 'all'
+        } catch { return 'all' }
+    })
+    const handleMachineFilterChange = (f: MachineFilter) => {
+        setMachineFilter(f)
+        try { localStorage.setItem(MACHINE_FILTER_STORAGE_KEY, f) } catch { /* ignore */ }
+    }
+
+    const resolveMachineLabel = (machineId: string | null): string => {
+        if (machineId && machineLabelsById[machineId]) {
+            return machineLabelsById[machineId]
+        }
+        if (machineId) {
+            return machineId.slice(0, 8)
+        }
+        return t('machine.unknown')
+    }
+
+    // Derive machines present in the session list (ignoring current machine filter so
+    // all options stay visible and counts reflect the unfiltered picture).
+    const machineEntries = useMemo<MachineEntry[]>(() => {
+        const counts = new Map<string | null, number>()
+        for (const s of props.sessions) {
+            const id = s.metadata?.machineId ?? null
+            counts.set(id, (counts.get(id) ?? 0) + 1)
+        }
+        return [...counts.entries()]
+            .map(([id, count]) => ({ id, label: resolveMachineLabel(id), count }))
+            .sort((a, b) => b.count - a.count)
+    }, [props.sessions, machineLabelsById, t])
+
+    // If the stored filter references a machine no longer present, reset to 'all'.
+    useEffect(() => {
+        if (machineFilter === 'all') return
+        const ids = new Set(machineEntries.map(m => m.id ?? UNKNOWN_MACHINE_FILTER_KEY))
+        if (!ids.has(machineFilter)) {
+            handleMachineFilterChange('all')
+        }
+    }, [machineEntries, machineFilter])
+
     // --- Search state ---
     const [searchQuery, setSearchQuery] = useState('')
 
     // --- Filtered sessions ---
     const filteredSessions = useMemo(() => {
         let result = props.sessions
+        if (machineFilter !== 'all') {
+            const target = machineFilter === UNKNOWN_MACHINE_FILTER_KEY ? null : machineFilter
+            result = result.filter(s => (s.metadata?.machineId ?? null) === target)
+        }
         if (filter !== 'all') {
             result = result.filter(s => matchesFilter(s, filter))
         }
@@ -727,7 +831,7 @@ export function SessionList(props: {
             result = result.filter(s => matchesSearch(s, searchQuery.trim()))
         }
         return result
-    }, [props.sessions, filter, searchQuery])
+    }, [props.sessions, filter, searchQuery, machineFilter])
 
     const groups = useMemo(
         () => groupSessionsByDirectory(deduplicateSessionsByAgentId(filteredSessions, selectedSessionId)),
@@ -751,16 +855,6 @@ export function SessionList(props: {
             next.set(groupKey, !isCollapsed)
             return next
         })
-    }
-
-    const resolveMachineLabel = (machineId: string | null): string => {
-        if (machineId && machineLabelsById[machineId]) {
-            return machineLabelsById[machineId]
-        }
-        if (machineId) {
-            return machineId.slice(0, 8)
-        }
-        return t('machine.unknown')
     }
 
     useEffect(() => {
@@ -808,6 +902,16 @@ export function SessionList(props: {
                         <PlusIcon className="h-5 w-5" />
                     </button>
                 </div>
+            ) : null}
+
+            {/* Machine filter bar — only when >1 machine has sessions */}
+            {machineEntries.length > 1 ? (
+                <MachineFilterBar
+                    machines={machineEntries}
+                    filter={machineFilter}
+                    totalCount={props.sessions.length}
+                    onFilterChange={handleMachineFilterChange}
+                />
             ) : null}
 
             {/* Filter bar */}

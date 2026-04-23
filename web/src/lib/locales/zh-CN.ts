@@ -61,6 +61,7 @@ export default {
   'sessions.filter.active': '\u6d3b\u8dc3',
   'sessions.filter.pending': '\u5f85\u5904\u7406',
   'sessions.filter.inactive': '\u5df2\u7ed3\u675f',
+  'sessions.machine.all': '\u5168\u90e8\u673a\u5668',
   'session.time.justNow': '\u521a\u521a',
   'session.time.minutesAgo': '{n} \u5206\u949f\u524d',
   'session.time.hoursAgo': '{n} \u5c0f\u65f6\u524d',
