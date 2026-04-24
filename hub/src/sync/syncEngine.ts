@@ -298,7 +298,15 @@ export class SyncEngine {
     }
 
     async archiveSession(sessionId: string): Promise<void> {
-        await this.rpcGateway.killSession(sessionId)
+        const session = this.sessionCache.getSession(sessionId)
+        if (session?.active) {
+            try {
+                await this.rpcGateway.killSession(sessionId)
+            } catch {
+                // Runtime may have died between the active check and the RPC;
+                // fall through and mark the session ended locally.
+            }
+        }
         this.handleSessionEnd({ sid: sessionId, time: Date.now() })
     }
 
