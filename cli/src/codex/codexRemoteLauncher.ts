@@ -569,6 +569,17 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             }
         });
 
+        // Probe the app server for supported models + collaboration modes so
+        // the web can render runtime-accurate selectors. Failures don't block
+        // session startup — the web falls back to shared static presets.
+        try {
+            const { probeCodexCapabilities } = await import('./utils/probeCapabilities');
+            const capabilities = await probeCodexCapabilities(appServerClient);
+            session.client.emitSessionCapabilities(capabilities);
+        } catch (error) {
+            logger.debug('[codex-remote] capabilities probe failed', error);
+        }
+
         let hasThread = false;
         let pending: QueuedMessage | null = null;
 

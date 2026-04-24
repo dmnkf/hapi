@@ -513,6 +513,10 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.emit('messages-consumed', { sid: this.sessionId, localIds })
     }
 
+    emitSessionCapabilities(capabilities: import('@hapi/protocol').SessionCapabilities): void {
+        this.socket.emit('session-capabilities', { sid: this.sessionId, capabilities })
+    }
+
     sendSessionDeath(): void {
         void cleanupUploadDir(this.sessionId)
         this.socket.emit('session-end', { sid: this.sessionId, time: Date.now() })

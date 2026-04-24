@@ -1,14 +1,12 @@
+import {
+    CODEX_REASONING_EFFORTS,
+    CODEX_REASONING_EFFORT_LABELS,
+    type SessionCapabilities,
+} from '@hapi/protocol'
+
 export type CodexComposerReasoningEffortOption = {
     value: string | null
     label: string
-}
-
-const CODEX_REASONING_EFFORT_PRESETS = ['low', 'medium', 'high', 'xhigh'] as const
-const CODEX_REASONING_EFFORT_LABELS: Record<(typeof CODEX_REASONING_EFFORT_PRESETS)[number], string> = {
-    low: 'Low',
-    medium: 'Medium',
-    high: 'High',
-    xhigh: 'XHigh'
 }
 
 function normalizeCodexComposerReasoningEffort(effort?: string | null): string | null {
@@ -25,15 +23,23 @@ function formatCodexReasoningEffortLabel(effort: string): string {
         ?? `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`
 }
 
-export function getCodexComposerReasoningEffortOptions(currentEffort?: string | null): CodexComposerReasoningEffortOption[] {
+export function getCodexComposerReasoningEffortOptions(
+    currentEffort?: string | null,
+    capabilities?: SessionCapabilities
+): CodexComposerReasoningEffortOption[] {
     const normalizedCurrentEffort = normalizeCodexComposerReasoningEffort(currentEffort)
+    // Prefer runtime-reported efforts when present; fall back to the shared enum.
+    const presets = capabilities?.reasoningEfforts && capabilities.reasoningEfforts.length > 0
+        ? capabilities.reasoningEfforts
+        : (CODEX_REASONING_EFFORTS as readonly string[])
+
     const options: CodexComposerReasoningEffortOption[] = [
         { value: null, label: 'Default' }
     ]
 
     if (
         normalizedCurrentEffort
-        && !CODEX_REASONING_EFFORT_PRESETS.includes(normalizedCurrentEffort as typeof CODEX_REASONING_EFFORT_PRESETS[number])
+        && !presets.includes(normalizedCurrentEffort)
     ) {
         options.push({
             value: normalizedCurrentEffort,
@@ -41,9 +47,9 @@ export function getCodexComposerReasoningEffortOptions(currentEffort?: string | 
         })
     }
 
-    options.push(...CODEX_REASONING_EFFORT_PRESETS.map((effort) => ({
+    options.push(...presets.map((effort) => ({
         value: effort,
-        label: CODEX_REASONING_EFFORT_LABELS[effort]
+        label: formatCodexReasoningEffortLabel(effort)
     })))
 
     return options

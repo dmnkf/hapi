@@ -38,6 +38,7 @@ export type SocketServerDeps = {
     onWebappEvent?: (event: SyncEvent) => void
     onSessionAlive?: (payload: { sid: string; time: number; thinking?: boolean; mode?: 'local' | 'remote' }) => void
     onSessionEnd?: (payload: { sid: string; time: number }) => void
+    onSessionCapabilities?: (sessionId: string, capabilities: import('@hapi/protocol').SessionCapabilities) => void
     onMachineAlive?: (payload: { machineId: string; time: number }) => void
     onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
 }
@@ -113,6 +114,7 @@ export function createSocketServer(deps: SocketServerDeps): {
         terminalRegistry,
         onSessionAlive: deps.onSessionAlive,
         onSessionEnd: deps.onSessionEnd,
+        onSessionCapabilities: deps.onSessionCapabilities,
         onMachineAlive: deps.onMachineAlive,
         onWebappEvent: deps.onWebappEvent,
         onBackgroundTaskDelta: deps.onBackgroundTaskDelta

@@ -205,6 +205,10 @@ export class SyncEngine {
         this.triggerDedupIfNeeded(payload.sid)
     }
 
+    handleSessionCapabilities(sessionId: string, capabilities: import('@hapi/protocol').SessionCapabilities): void {
+        this.sessionCache.handleSessionCapabilities(sessionId, capabilities)
+    }
+
     handleSessionEnd(payload: { sid: string; time: number }): void {
         this.sessionCache.handleSessionEnd(payload)
         // Retry dedup now that this session is inactive — a prior dedup may have

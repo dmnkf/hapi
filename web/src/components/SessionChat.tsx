@@ -399,6 +399,7 @@ export function SessionChat(props: {
                         modelReasoningEffort={agentFlavor === 'codex' ? props.session.modelReasoningEffort : undefined}
                         effort={props.session.effort}
                         agentFlavor={agentFlavor}
+                        capabilities={props.session.capabilities}
                         active={props.session.active}
                         allowSendWhenInactive
                         thinking={props.session.thinking}

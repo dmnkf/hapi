@@ -1,3 +1,4 @@
+import type { SessionCapabilities } from './capabilities'
 import type { Session, WorktreeMetadata } from './schemas'
 
 export type SessionSummaryMetadata = {
@@ -23,6 +24,7 @@ export type SessionSummary = {
     pendingRequestsCount: number
     model: string | null
     effort: string | null
+    capabilities?: SessionCapabilities
 }
 
 export function toSessionSummary(session: Session): SessionSummary {
@@ -60,6 +62,7 @@ export function toSessionSummary(session: Session): SessionSummary {
         todoProgress,
         pendingRequestsCount,
         model: session.model,
-        effort: session.effort
+        effort: session.effort,
+        capabilities: session.capabilities
     }
 }

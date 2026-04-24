@@ -164,6 +164,14 @@ export class CodexAppServerClient {
         return response as TurnInterruptResponse;
     }
 
+    async listModels(): Promise<unknown> {
+        return this.sendRequest('model/list', {}, { timeoutMs: 10_000 });
+    }
+
+    async listCollaborationModes(): Promise<unknown> {
+        return this.sendRequest('collaborationMode/list', {}, { timeoutMs: 10_000 });
+    }
+
     async disconnect(): Promise<void> {
         if (!this.connected) {
             return;

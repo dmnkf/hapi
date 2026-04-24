@@ -1,4 +1,5 @@
 import { AgentStateSchema, MetadataSchema, TeamStateSchema } from '@hapi/protocol/schemas'
+import type { SessionCapabilities } from '@hapi/protocol'
 import type { CodexCollaborationMode, PermissionMode, Session } from '@hapi/protocol/types'
 import type { Store } from '../store'
 import { clampAliveTime } from './aliveTime'
@@ -142,7 +143,8 @@ export class SessionCache {
             modelReasoningEffort: stored.modelReasoningEffort,
             effort: stored.effort,
             permissionMode: existing?.permissionMode,
-            collaborationMode: existing?.collaborationMode
+            collaborationMode: existing?.collaborationMode,
+            capabilities: existing?.capabilities
         }
 
         this.sessions.set(sessionId, session)
@@ -261,6 +263,17 @@ export class SessionCache {
             type: 'session-updated',
             sessionId,
             data: { backgroundTaskCount: next }
+        })
+    }
+
+    handleSessionCapabilities(sessionId: string, capabilities: SessionCapabilities): void {
+        const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
+        if (!session) return
+        session.capabilities = capabilities
+        this.publisher.emit({
+            type: 'session-updated',
+            sessionId,
+            data: { capabilities }
         })
     }
 

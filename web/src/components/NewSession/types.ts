@@ -1,27 +1,33 @@
-import { GEMINI_MODEL_PRESETS, GEMINI_MODEL_LABELS } from '@hapi/protocol'
+import {
+    CLAUDE_EFFORT_LABELS,
+    CLAUDE_EFFORT_PRESETS,
+    CLAUDE_MODEL_LABELS,
+    CODEX_MODEL_LABELS,
+    CODEX_MODEL_PRESETS,
+    CODEX_REASONING_EFFORTS,
+    CODEX_REASONING_EFFORT_LABELS,
+    GEMINI_MODEL_LABELS,
+    GEMINI_MODEL_PRESETS,
+} from '@hapi/protocol'
 
 export type AgentType = 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
 export type SessionType = 'simple' | 'worktree'
-export type CodexReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh'
-export type ClaudeEffort = 'auto' | 'medium' | 'high' | 'max'
+// Composer carries the literal enum the CLI validates against, plus a 'default'
+// sentinel the UI collapses to null before sending.
+export type CodexReasoningEffort = 'default' | typeof CODEX_REASONING_EFFORTS[number]
+export type ClaudeEffort = 'auto' | typeof CLAUDE_EFFORT_PRESETS[number]
+
+// UI display order; labels come from shared so there's only one place to update.
+const CLAUDE_DISPLAY_ORDER = ['opus', 'opus[1m]', 'sonnet', 'sonnet[1m]'] as const
 
 export const MODEL_OPTIONS: Record<AgentType, { value: string; label: string }[]> = {
     claude: [
         { value: 'auto', label: 'Auto' },
-        { value: 'opus', label: 'Opus' },
-        { value: 'opus[1m]', label: 'Opus 1M' },
-        { value: 'sonnet', label: 'Sonnet' },
-        { value: 'sonnet[1m]', label: 'Sonnet 1M' },
+        ...CLAUDE_DISPLAY_ORDER.map(m => ({ value: m, label: CLAUDE_MODEL_LABELS[m] })),
     ],
     codex: [
         { value: 'auto', label: 'Auto' },
-        { value: 'gpt-5.4', label: 'GPT-5.4' },
-        { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-        { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
-        { value: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
-        { value: 'gpt-5.2', label: 'GPT-5.2' },
-        { value: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
-        { value: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini' },
+        ...CODEX_MODEL_PRESETS.map(m => ({ value: m, label: CODEX_MODEL_LABELS[m] })),
     ],
     cursor: [],
     gemini: [
@@ -33,15 +39,10 @@ export const MODEL_OPTIONS: Record<AgentType, { value: string; label: string }[]
 
 export const CODEX_REASONING_EFFORT_OPTIONS: { value: CodexReasoningEffort; label: string }[] = [
     { value: 'default', label: 'Default' },
-    { value: 'low', label: 'Low' },
-    { value: 'medium', label: 'Medium' },
-    { value: 'high', label: 'High' },
-    { value: 'xhigh', label: 'XHigh' },
+    ...CODEX_REASONING_EFFORTS.map(e => ({ value: e, label: CODEX_REASONING_EFFORT_LABELS[e] })),
 ]
 
 export const CLAUDE_EFFORT_OPTIONS: { value: ClaudeEffort; label: string }[] = [
     { value: 'auto', label: 'Auto' },
-    { value: 'medium', label: 'Medium' },
-    { value: 'high', label: 'High' },
-    { value: 'max', label: 'Max' },
+    ...CLAUDE_EFFORT_PRESETS.map(e => ({ value: e, label: CLAUDE_EFFORT_LABELS[e] })),
 ]

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SessionCapabilitiesSchema, type SessionCapabilities } from './capabilities'
 import type { CodexCollaborationMode, PermissionMode } from './modes'
 
 export type SocketErrorReason = 'namespace-missing' | 'access-denied' | 'not-found'
@@ -67,6 +68,13 @@ export const TerminalErrorPayloadSchema = z.object({
 })
 
 export type TerminalErrorPayload = z.infer<typeof TerminalErrorPayloadSchema>
+
+export const SessionCapabilitiesPayloadSchema = z.object({
+    sid: z.string().min(1),
+    capabilities: SessionCapabilitiesSchema
+})
+
+export type SessionCapabilitiesPayload = z.infer<typeof SessionCapabilitiesPayloadSchema>
 
 export const UpdateNewMessageBodySchema = z.object({
     t: z.literal('new-message'),
@@ -145,6 +153,7 @@ export interface ClientToServerEvents {
         collaborationMode?: CodexCollaborationMode
     }) => void
     'session-end': (data: { sid: string; time: number }) => void
+    'session-capabilities': (data: { sid: string; capabilities: SessionCapabilities }) => void
     'messages-consumed': (data: { sid: string; localIds: string[] }) => void
     'update-metadata': (data: { sid: string; expectedVersion: number; metadata: unknown }, cb: (answer: {
         result: 'error'

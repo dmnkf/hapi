@@ -56,6 +56,7 @@ export function HappyComposer(props: {
     contextSize?: number
     controlledByUser?: boolean
     agentFlavor?: string | null
+    capabilities?: import('@hapi/protocol').SessionCapabilities
     onCollaborationModeChange?: (mode: CodexCollaborationMode) => void
     onPermissionModeChange?: (mode: PermissionMode) => void
     onModelChange?: (model: string | null) => void
@@ -89,6 +90,7 @@ export function HappyComposer(props: {
         contextSize,
         controlledByUser = false,
         agentFlavor,
+        capabilities,
         onCollaborationModeChange,
         onPermissionModeChange,
         onModelChange,
@@ -283,8 +285,8 @@ export function HappyComposer(props: {
         [agentFlavor, model]
     )
     const codexReasoningEffortOptions = useMemo(
-        () => agentFlavor === 'codex' ? getCodexComposerReasoningEffortOptions(modelReasoningEffort) : [],
-        [agentFlavor, modelReasoningEffort]
+        () => agentFlavor === 'codex' ? getCodexComposerReasoningEffortOptions(modelReasoningEffort, capabilities) : [],
+        [agentFlavor, modelReasoningEffort, capabilities]
     )
     const claudeEffortOptions = useMemo(
         () => getClaudeComposerEffortOptions(effort),
