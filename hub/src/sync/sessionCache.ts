@@ -356,6 +356,41 @@ export class SessionCache {
         this.publisher.emit({ type: 'session-updated', sessionId, data: session })
     }
 
+    async markSessionArchived(sessionId: string): Promise<void> {
+        const session = this.sessions.get(sessionId)
+        if (!session) {
+            throw new Error('Session not found')
+        }
+
+        const currentMetadata = session.metadata ?? { path: '', host: '' }
+        if (currentMetadata.archivedBy) {
+            return
+        }
+        const newMetadata = {
+            ...currentMetadata,
+            archivedBy: 'user',
+            archiveReason: 'User archived'
+        }
+
+        const result = this.store.sessions.updateSessionMetadata(
+            sessionId,
+            newMetadata,
+            session.metadataVersion,
+            session.namespace,
+            { touchUpdatedAt: false }
+        )
+
+        if (result.result === 'error') {
+            throw new Error('Failed to mark session archived')
+        }
+        if (result.result === 'version-mismatch') {
+            // Another writer raced with us — harmless, next fetch will reflect truth.
+            return
+        }
+
+        this.refreshSession(sessionId)
+    }
+
     async renameSession(sessionId: string, name: string): Promise<void> {
         const session = this.sessions.get(sessionId)
         if (!session) {

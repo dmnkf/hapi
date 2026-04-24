@@ -9,6 +9,7 @@ export type SessionSummaryMetadata = {
     flavor?: string | null
     worktree?: WorktreeMetadata
     agentSessionId?: string
+    archivedBy?: string
 }
 
 export type SessionSummary = {
@@ -40,7 +41,8 @@ export function toSessionSummary(session: Session): SessionSummary {
             ?? session.metadata.geminiSessionId
             ?? session.metadata.opencodeSessionId
             ?? session.metadata.cursorSessionId
-            ?? undefined
+            ?? undefined,
+        archivedBy: session.metadata.archivedBy ?? undefined
     } : null
 
     const todoProgress = session.todos?.length ? {

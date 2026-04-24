@@ -61,6 +61,7 @@ export default {
   'sessions.filter.active': 'Active',
   'sessions.filter.pending': 'Pending',
   'sessions.filter.inactive': 'Inactive',
+  'sessions.filter.archived': 'Archived',
   'sessions.machine.all': 'All machines',
   'focus.enter': 'Focus pending',
   'focus.progress': 'Focus · {current} of {total}',

@@ -61,6 +61,7 @@ export default {
   'sessions.filter.active': '\u6d3b\u8dc3',
   'sessions.filter.pending': '\u5f85\u5904\u7406',
   'sessions.filter.inactive': '\u5df2\u7ed3\u675f',
+  'sessions.filter.archived': '\u5df2\u5f52\u6863',
   'sessions.machine.all': '\u5168\u90e8\u673a\u5668',
   'focus.enter': '\u4e13\u6ce8\u5f85\u5904\u7406',
   'focus.progress': '\u4e13\u6ce8\u00b7{current}/{total}',

@@ -21,7 +21,7 @@ type SessionGroup = {
     hasActiveSession: boolean
 }
 
-type StatusFilter = 'all' | 'active' | 'pending' | 'inactive'
+type StatusFilter = 'all' | 'active' | 'pending' | 'inactive' | 'archived'
 type MachineFilter = 'all' | string
 
 const FILTER_STORAGE_KEY = 'hapi:sessionFilter'
@@ -304,19 +304,30 @@ function matchesSearch(session: SessionSummary, query: string): boolean {
     return fields.some(f => f && f.toLowerCase().includes(q))
 }
 
+function isArchived(session: SessionSummary): boolean {
+    return Boolean(session.metadata?.archivedBy)
+}
+
 function matchesFilter(session: SessionSummary, filter: StatusFilter): boolean {
     switch (filter) {
         case 'all': return true
         case 'active': return session.active
         case 'pending': return session.pendingRequestsCount > 0
         case 'inactive': return !session.active
+        case 'archived': return isArchived(session)
     }
 }
 
 function loadSavedFilter(): StatusFilter {
     try {
         const stored = localStorage.getItem(FILTER_STORAGE_KEY)
-        if (stored === 'active' || stored === 'pending' || stored === 'inactive' || stored === 'all') {
+        if (
+            stored === 'active' ||
+            stored === 'pending' ||
+            stored === 'inactive' ||
+            stored === 'archived' ||
+            stored === 'all'
+        ) {
             return stored
         }
     } catch { /* ignore */ }
@@ -386,18 +397,23 @@ function FilterBar(props: {
     const { sessions, filter, onFilterChange } = props
     const { t } = useTranslation()
 
-    const counts = useMemo(() => ({
-        all: sessions.length,
-        active: sessions.filter(s => s.active).length,
-        pending: sessions.filter(s => s.pendingRequestsCount > 0).length,
-        inactive: sessions.filter(s => !s.active).length,
-    }), [sessions])
+    const counts = useMemo(() => {
+        const nonArchived = sessions.filter(s => !isArchived(s))
+        return {
+            all: nonArchived.length,
+            active: nonArchived.filter(s => s.active).length,
+            pending: nonArchived.filter(s => s.pendingRequestsCount > 0).length,
+            inactive: nonArchived.filter(s => !s.active).length,
+            archived: sessions.filter(s => isArchived(s)).length,
+        }
+    }, [sessions])
 
     const chips: { key: StatusFilter; label: string }[] = [
         { key: 'all', label: t('sessions.filter.all') },
         { key: 'active', label: t('sessions.filter.active') },
         { key: 'pending', label: t('sessions.filter.pending') },
         { key: 'inactive', label: t('sessions.filter.inactive') },
+        ...(counts.archived > 0 ? [{ key: 'archived' as StatusFilter, label: t('sessions.filter.archived') }] : []),
     ]
 
     return (
@@ -820,6 +836,10 @@ export function SessionList(props: {
     // --- Filtered sessions ---
     const filteredSessions = useMemo(() => {
         let result = props.sessions
+        // Hide archived sessions from every view except the explicit 'archived' filter.
+        if (filter !== 'archived') {
+            result = result.filter(s => !isArchived(s))
+        }
         if (machineFilter !== 'all') {
             const target = machineFilter === UNKNOWN_MACHINE_FILTER_KEY ? null : machineFilter
             result = result.filter(s => (s.metadata?.machineId ?? null) === target)

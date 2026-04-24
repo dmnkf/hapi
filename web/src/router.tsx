@@ -140,6 +140,7 @@ function SessionsPage() {
         let pending = 0
         let thinking = 0
         for (const s of sessions) {
+            if (s.metadata?.archivedBy) continue
             if (s.active) active++
             if (s.pendingRequestsCount > 0) pending += s.pendingRequestsCount
             if (s.thinking) thinking++
@@ -156,7 +157,7 @@ function SessionsPage() {
         } catch { /* ignore */ }
 
         const pendingIds = sessions
-            .filter(s => s.pendingRequestsCount > 0)
+            .filter(s => s.pendingRequestsCount > 0 && !s.metadata?.archivedBy)
             .filter(s => {
                 if (!machineFilter) return true
                 const id = s.metadata?.machineId ?? '__unknown__'

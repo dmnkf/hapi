@@ -308,6 +308,7 @@ export class SyncEngine {
             }
         }
         this.handleSessionEnd({ sid: sessionId, time: Date.now() })
+        await this.sessionCache.markSessionArchived(sessionId)
     }
 
     async switchSession(sessionId: string, to: 'remote' | 'local'): Promise<void> {
