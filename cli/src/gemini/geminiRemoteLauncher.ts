@@ -60,6 +60,12 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
         });
         this.backend = backend;
 
+        backend.onSessionCapabilities((capabilities) => {
+            session.client.emitSessionCapabilities(capabilities);
+        });
+        backend.onSlashCommands((slashCommands) => {
+            session.client.emitSessionSlashCommands(slashCommands);
+        });
         backend.onStderrError((error) => {
             logger.debug('[gemini-remote] stderr error', error);
             session.sendSessionEvent({ type: 'message', message: error.message });

@@ -1,5 +1,10 @@
 import type { ClientToServerEvents } from '@hapi/protocol'
-import { SessionCapabilitiesPayloadSchema, type SessionCapabilities } from '@hapi/protocol'
+import {
+    SessionCapabilitiesPayloadSchema,
+    SessionSlashCommandsPayloadSchema,
+    type SessionCapabilities,
+    type SessionRuntimeSlashCommands
+} from '@hapi/protocol'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import type { CodexCollaborationMode, PermissionMode } from '@hapi/protocol/types'
@@ -60,12 +65,13 @@ export type SessionHandlersDeps = {
     onSessionAlive?: (payload: SessionAlivePayload) => void
     onSessionEnd?: (payload: SessionEndPayload) => void
     onSessionCapabilities?: (sessionId: string, capabilities: SessionCapabilities) => void
+    onSessionSlashCommands?: (sessionId: string, slashCommands: SessionRuntimeSlashCommands) => void
     onWebappEvent?: (event: SyncEvent) => void
     onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
 }
 
 export function registerSessionHandlers(socket: CliSocketWithData, deps: SessionHandlersDeps): void {
-    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionEnd, onSessionCapabilities, onWebappEvent, onBackgroundTaskDelta } = deps
+    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionEnd, onSessionCapabilities, onSessionSlashCommands, onWebappEvent, onBackgroundTaskDelta } = deps
 
     socket.on('message', (data: unknown) => {
         const parsed = messageSchema.safeParse(data)
@@ -295,5 +301,18 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             return
         }
         onSessionCapabilities?.(parsed.data.sid, parsed.data.capabilities)
+    })
+
+    socket.on('session-slash-commands', (data: unknown) => {
+        const parsed = SessionSlashCommandsPayloadSchema.safeParse(data)
+        if (!parsed.success) {
+            return
+        }
+        const sessionAccess = resolveSessionAccess(parsed.data.sid)
+        if (!sessionAccess.ok) {
+            emitAccessError('session', parsed.data.sid, sessionAccess.reason)
+            return
+        }
+        onSessionSlashCommands?.(parsed.data.sid, parsed.data.slashCommands)
     })
 }

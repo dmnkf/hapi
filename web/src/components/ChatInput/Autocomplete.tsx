@@ -50,7 +50,7 @@ export const Autocomplete = memo(function Autocomplete(props: AutocompleteProps)
         const builtin: Suggestion[] = []
         const custom: Suggestion[] = []
         for (const s of suggestions) {
-            if (s.source === 'builtin') builtin.push(s)
+            if (s.source === 'builtin' || s.source === 'runtime') builtin.push(s)
             else custom.push(s)
         }
 

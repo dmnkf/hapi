@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import { SessionCapabilitiesSchema, type SessionCapabilities } from './capabilities'
+import {
+    SessionCapabilitiesSchema,
+    SessionRuntimeSlashCommandsSchema,
+    type SessionCapabilities,
+    type SessionRuntimeSlashCommands
+} from './capabilities'
 import type { CodexCollaborationMode, PermissionMode } from './modes'
 
 export type SocketErrorReason = 'namespace-missing' | 'access-denied' | 'not-found'
@@ -75,6 +80,13 @@ export const SessionCapabilitiesPayloadSchema = z.object({
 })
 
 export type SessionCapabilitiesPayload = z.infer<typeof SessionCapabilitiesPayloadSchema>
+
+export const SessionSlashCommandsPayloadSchema = z.object({
+    sid: z.string().min(1),
+    slashCommands: SessionRuntimeSlashCommandsSchema
+})
+
+export type SessionSlashCommandsPayload = z.infer<typeof SessionSlashCommandsPayloadSchema>
 
 export const UpdateNewMessageBodySchema = z.object({
     t: z.literal('new-message'),
@@ -154,6 +166,7 @@ export interface ClientToServerEvents {
     }) => void
     'session-end': (data: { sid: string; time: number }) => void
     'session-capabilities': (data: { sid: string; capabilities: SessionCapabilities }) => void
+    'session-slash-commands': (data: { sid: string; slashCommands: SessionRuntimeSlashCommands }) => void
     'messages-consumed': (data: { sid: string; localIds: string[] }) => void
     'update-metadata': (data: { sid: string; expectedVersion: number; metadata: unknown }, cb: (answer: {
         result: 'error'

@@ -30,7 +30,7 @@ const RECONNECT_MAX_DELAY_MS = 30_000
 const RECONNECT_JITTER_MS = 500
 const INVALIDATION_BATCH_MS = 16
 
-type SessionPatch = Partial<Pick<Session, 'active' | 'thinking' | 'activeAt' | 'updatedAt' | 'model' | 'modelReasoningEffort' | 'effort' | 'permissionMode' | 'collaborationMode'>>
+type SessionPatch = Partial<Pick<Session, 'active' | 'thinking' | 'activeAt' | 'updatedAt' | 'model' | 'modelReasoningEffort' | 'effort' | 'permissionMode' | 'collaborationMode' | 'capabilities' | 'runtimeSlashCommands'>>
 
 function sortSessionSummaries(left: SessionSummary, right: SessionSummary): number {
     if (left.active !== right.active) {
@@ -101,6 +101,14 @@ function getSessionPatch(value: unknown): SessionPatch | null {
         patch.collaborationMode = value.collaborationMode as Session['collaborationMode']
         hasKnownPatch = true
     }
+    if (hasRecordShape(value.capabilities)) {
+        patch.capabilities = value.capabilities as Session['capabilities']
+        hasKnownPatch = true
+    }
+    if (hasRecordShape(value.runtimeSlashCommands)) {
+        patch.runtimeSlashCommands = value.runtimeSlashCommands as Session['runtimeSlashCommands']
+        hasKnownPatch = true
+    }
 
     return hasKnownPatch ? patch : null
 }
@@ -109,7 +117,7 @@ function hasUnknownSessionPatchKeys(value: unknown): boolean {
     if (!hasRecordShape(value)) {
         return false
     }
-    const knownKeys = new Set(['active', 'thinking', 'activeAt', 'updatedAt', 'model', 'modelReasoningEffort', 'effort', 'permissionMode', 'collaborationMode'])
+    const knownKeys = new Set(['active', 'thinking', 'activeAt', 'updatedAt', 'model', 'modelReasoningEffort', 'effort', 'permissionMode', 'collaborationMode', 'capabilities', 'runtimeSlashCommands'])
     return Object.keys(value).some((key) => !knownKeys.has(key))
 }
 

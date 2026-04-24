@@ -209,6 +209,10 @@ export class SyncEngine {
         this.sessionCache.handleSessionCapabilities(sessionId, capabilities)
     }
 
+    handleSessionSlashCommands(sessionId: string, slashCommands: import('@hapi/protocol').SessionRuntimeSlashCommands): void {
+        this.sessionCache.handleSessionSlashCommands(sessionId, slashCommands)
+    }
+
     handleSessionEnd(payload: { sid: string; time: number }): void {
         this.sessionCache.handleSessionEnd(payload)
         // Retry dedup now that this session is inactive — a prior dedup may have

@@ -470,6 +470,11 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return sessionResult
         }
 
+        const runtimeCommands = sessionResult.session.runtimeSlashCommands?.commands
+        if (runtimeCommands && runtimeCommands.length > 0) {
+            return c.json({ success: true, commands: runtimeCommands })
+        }
+
         // Get agent type from session metadata, default to 'claude'
         const agent = sessionResult.session.metadata?.flavor ?? 'claude'
 

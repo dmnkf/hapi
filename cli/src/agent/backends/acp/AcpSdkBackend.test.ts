@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentMessage } from '@/agent/types';
+import type { SessionCapabilities, SessionRuntimeSlashCommands } from '@hapi/protocol';
 import { AcpSdkBackend } from './AcpSdkBackend';
 import { ACP_SESSION_UPDATE_TYPES } from './constants';
 
@@ -30,6 +31,154 @@ afterEach(() => {
 });
 
 describe('AcpSdkBackend', () => {
+    it('emits capabilities from ACP session setup config', async () => {
+        const backend = new AcpSdkBackend({ command: 'opencode' });
+        const capabilities: SessionCapabilities[] = [];
+        backend.onSessionCapabilities((value) => capabilities.push(value));
+
+        const backendInternal = backend as unknown as {
+            transport: {
+                sendRequest: (...args: unknown[]) => Promise<unknown>;
+            } | null;
+        };
+
+        backendInternal.transport = {
+            sendRequest: async () => ({
+                sessionId: 'session-1',
+                configOptions: [
+                    {
+                        id: 'model',
+                        name: 'Model',
+                        category: 'model',
+                        type: 'select',
+                        currentValue: 'gemini-flash',
+                        options: [
+                            { value: 'gemini-flash', name: 'Gemini Flash' },
+                            { value: 'gemini-pro', name: 'Gemini Pro' }
+                        ]
+                    },
+                    {
+                        id: 'reasoning',
+                        name: 'Reasoning',
+                        category: 'thought_level',
+                        type: 'select',
+                        currentValue: 'low',
+                        options: [
+                            { value: 'low', name: 'Low' },
+                            { value: 'high', name: 'High' }
+                        ]
+                    }
+                ],
+                modes: {
+                    currentModeId: 'code',
+                    availableModes: [
+                        { id: 'ask', name: 'Ask' },
+                        { id: 'code', name: 'Code' }
+                    ]
+                }
+            })
+        };
+
+        await backend.newSession({ cwd: '/tmp', mcpServers: [] });
+
+        expect(capabilities).toEqual([
+            {
+                models: [
+                    { id: 'gemini-flash', label: 'Gemini Flash', isDefault: true },
+                    { id: 'gemini-pro', label: 'Gemini Pro', isDefault: undefined }
+                ],
+                reasoningEfforts: ['low', 'high'],
+                effortOptions: ['low', 'high'],
+                collaborationModes: ['ask', 'code'],
+                source: 'dynamic',
+                probedAt: expect.any(Number)
+            }
+        ]);
+    });
+
+    it('emits runtime slash commands and capability updates from ACP notifications', () => {
+        const backend = new AcpSdkBackend({ command: 'opencode' });
+        const capabilities: SessionCapabilities[] = [];
+        const slashCommands: SessionRuntimeSlashCommands[] = [];
+        backend.onSessionCapabilities((value) => capabilities.push(value));
+        backend.onSlashCommands((value) => slashCommands.push(value));
+
+        const backendInternal = backend as unknown as {
+            activeSessionId: string | null;
+            handleSessionUpdate: (params: unknown) => void;
+        };
+        backendInternal.activeSessionId = 'session-1';
+
+        backendInternal.handleSessionUpdate({
+            sessionId: 'session-1',
+            update: {
+                sessionUpdate: ACP_SESSION_UPDATE_TYPES.availableCommandsUpdate,
+                availableCommands: [
+                    {
+                        name: 'test',
+                        description: 'Run tests',
+                        input: { hint: 'target' }
+                    },
+                    {
+                        name: '/plan',
+                        description: 'Create a plan'
+                    }
+                ]
+            }
+        });
+
+        backendInternal.handleSessionUpdate({
+            sessionId: 'session-1',
+            update: {
+                sessionUpdate: ACP_SESSION_UPDATE_TYPES.configOptionUpdate,
+                configOptions: [
+                    {
+                        id: 'mode',
+                        name: 'Mode',
+                        category: 'mode',
+                        type: 'select',
+                        currentValue: 'code',
+                        options: [
+                            { value: 'ask', name: 'Ask' },
+                            { value: 'code', name: 'Code' }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        backendInternal.handleSessionUpdate({
+            sessionId: 'session-1',
+            update: {
+                sessionUpdate: ACP_SESSION_UPDATE_TYPES.currentModeUpdate,
+                currentModeId: 'review'
+            }
+        });
+
+        expect(slashCommands).toEqual([
+            {
+                commands: [
+                    { name: 'test', description: 'Run tests', source: 'runtime', inputHint: 'target' },
+                    { name: 'plan', description: 'Create a plan', source: 'runtime', inputHint: undefined }
+                ],
+                source: 'dynamic',
+                updatedAt: expect.any(Number)
+            }
+        ]);
+        expect(capabilities).toEqual([
+            {
+                collaborationModes: ['ask', 'code'],
+                source: 'dynamic',
+                probedAt: expect.any(Number)
+            },
+            {
+                collaborationModes: ['ask', 'code', 'review'],
+                source: 'dynamic',
+                probedAt: expect.any(Number)
+            }
+        ]);
+    });
+
     it('allows the permission handler to resolve requests immediately', async () => {
         const backend = new AcpSdkBackend({ command: 'opencode' });
         let capturedRequestId: string | null = null;

@@ -1,3 +1,5 @@
+import type { SessionCapabilities, SessionRuntimeSlashCommands } from '@hapi/protocol';
+
 export type McpEnvVar = {
     name: string;
     value: string;
@@ -62,6 +64,8 @@ export interface AgentBackend {
     cancelPrompt(sessionId: string): Promise<void>;
     respondToPermission(sessionId: string, request: PermissionRequest, response: PermissionResponse): Promise<void>;
     onPermissionRequest(handler: (request: PermissionRequest) => void): void;
+    onSessionCapabilities?(handler: (capabilities: SessionCapabilities) => void): void;
+    onSlashCommands?(handler: (slashCommands: SessionRuntimeSlashCommands) => void): void;
     disconnect(): Promise<void>;
 }
 

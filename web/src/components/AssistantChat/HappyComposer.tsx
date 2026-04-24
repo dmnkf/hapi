@@ -1,4 +1,4 @@
-import { getCodexCollaborationModeOptions, getPermissionModeOptionsForFlavor } from '@hapi/protocol'
+import { CODEX_COLLABORATION_MODE_LABELS, getPermissionModeOptionsForFlavor } from '@hapi/protocol'
 import { ComposerPrimitive, useAssistantApi, useAssistantState } from '@assistant-ui/react'
 import {
     type ChangeEvent as ReactChangeEvent,
@@ -39,6 +39,11 @@ export interface TextInputState {
 }
 
 const defaultSuggestionHandler = async (): Promise<Suggestion[]> => []
+
+function formatCollaborationModeLabel(mode: string): string {
+    return CODEX_COLLABORATION_MODE_LABELS[mode as keyof typeof CODEX_COLLABORATION_MODE_LABELS]
+        ?? `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`
+}
 
 export function HappyComposer(props: {
     sessionId?: string
@@ -277,12 +282,23 @@ export function HappyComposer(props: {
         [agentFlavor]
     )
     const collaborationModeOptions = useMemo(
-        () => agentFlavor === 'codex' ? getCodexCollaborationModeOptions() : [],
-        [agentFlavor]
+        () => {
+            if (agentFlavor !== 'codex') {
+                return []
+            }
+            const runtimeModes = capabilities?.collaborationModes && capabilities.collaborationModes.length > 0
+                ? capabilities.collaborationModes
+                : ['default', 'plan']
+            return runtimeModes.map((mode) => ({
+                mode,
+                label: formatCollaborationModeLabel(mode)
+            }))
+        },
+        [agentFlavor, capabilities]
     )
     const claudeModelOptions = useMemo(
-        () => getModelOptionsForFlavor(agentFlavor, model),
-        [agentFlavor, model]
+        () => getModelOptionsForFlavor(agentFlavor, model, capabilities),
+        [agentFlavor, model, capabilities]
     )
     const codexReasoningEffortOptions = useMemo(
         () => agentFlavor === 'codex' ? getCodexComposerReasoningEffortOptions(modelReasoningEffort, capabilities) : [],
@@ -387,14 +403,14 @@ export function HappyComposer(props: {
         const handleGlobalKeyDown = (e: globalThis.KeyboardEvent) => {
             if (e.key === 'm' && (e.metaKey || e.ctrlKey) && onModelChange && supportsModelChange(agentFlavor)) {
                 e.preventDefault()
-                onModelChange(getNextModelForFlavor(agentFlavor, model))
+                onModelChange(getNextModelForFlavor(agentFlavor, model, capabilities))
                 haptic('light')
             }
         }
 
         window.addEventListener('keydown', handleGlobalKeyDown)
         return () => window.removeEventListener('keydown', handleGlobalKeyDown)
-    }, [model, onModelChange, haptic, agentFlavor])
+    }, [model, onModelChange, haptic, agentFlavor, capabilities])
 
     const handleChange = useCallback((e: ReactChangeEvent<HTMLTextAreaElement>) => {
         const selection = {
@@ -546,7 +562,7 @@ export function HappyComposer(props: {
                                                 ? 'cursor-not-allowed opacity-50'
                                                 : 'cursor-pointer hover:bg-[var(--app-secondary-bg)]'
                                         }`}
-                                        onClick={() => handleCollaborationChange(option.mode)}
+                                        onClick={() => handleCollaborationChange(option.mode as CodexCollaborationMode)}
                                         onMouseDown={(e) => e.preventDefault()}
                                     >
                                         <div

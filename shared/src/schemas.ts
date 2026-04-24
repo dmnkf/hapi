@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { SessionCapabilitiesSchema } from './capabilities'
+import { SessionCapabilitiesSchema, SessionRuntimeSlashCommandsSchema } from './capabilities'
 import { CODEX_COLLABORATION_MODES, PERMISSION_MODES } from './modes'
 
 export const PermissionModeSchema = z.enum(PERMISSION_MODES)
@@ -182,7 +182,8 @@ export const SessionSchema = z.object({
     effort: z.string().nullable().optional().default(null),
     permissionMode: PermissionModeSchema.optional(),
     collaborationMode: CodexCollaborationModeSchema.optional(),
-    capabilities: SessionCapabilitiesSchema.optional()
+    capabilities: SessionCapabilitiesSchema.optional(),
+    runtimeSlashCommands: SessionRuntimeSlashCommandsSchema.optional()
 })
 
 export type Session = z.infer<typeof SessionSchema>

@@ -1,10 +1,36 @@
 import { MODEL_OPTIONS } from '@/components/NewSession/types'
 import { getClaudeComposerModelOptions, getNextClaudeComposerModel } from './claudeModelOptions'
 import type { ClaudeComposerModelOption } from './claudeModelOptions'
+import type { SessionCapabilities } from '@hapi/protocol'
 
 export type ModelOption = ClaudeComposerModelOption
 
-function getGeminiModelOptions(currentModel?: string | null): ModelOption[] {
+function getRuntimeModelOptions(currentModel?: string | null, capabilities?: SessionCapabilities): ModelOption[] | null {
+    const runtimeModels = capabilities?.models
+    if (!runtimeModels || runtimeModels.length === 0) {
+        return null
+    }
+
+    const options = [
+        { value: null, label: 'Auto' },
+        ...runtimeModels.map((model) => ({
+            value: model.id,
+            label: model.label ?? model.id
+        }))
+    ]
+    const normalized = currentModel?.trim() || null
+    if (normalized && !options.some((option) => option.value === normalized)) {
+        options.splice(1, 0, { value: normalized, label: normalized })
+    }
+    return options
+}
+
+function getGeminiModelOptions(currentModel?: string | null, capabilities?: SessionCapabilities): ModelOption[] {
+    const runtimeOptions = getRuntimeModelOptions(currentModel, capabilities)
+    if (runtimeOptions) {
+        return runtimeOptions
+    }
+
     const options = MODEL_OPTIONS.gemini.map((m) => ({
         value: m.value === 'auto' ? null : m.value,
         label: m.label
@@ -16,8 +42,8 @@ function getGeminiModelOptions(currentModel?: string | null): ModelOption[] {
     return options
 }
 
-function getNextGeminiModel(currentModel?: string | null): string | null {
-    const options = getGeminiModelOptions(currentModel)
+function getNextGeminiModel(currentModel?: string | null, capabilities?: SessionCapabilities): string | null {
+    const options = getGeminiModelOptions(currentModel, capabilities)
     const currentIndex = options.findIndex((o) => o.value === (currentModel ?? null))
     if (currentIndex === -1) {
         return options[0]?.value ?? null
@@ -25,16 +51,16 @@ function getNextGeminiModel(currentModel?: string | null): string | null {
     return options[(currentIndex + 1) % options.length]?.value ?? null
 }
 
-export function getModelOptionsForFlavor(flavor: string | undefined | null, currentModel?: string | null): ModelOption[] {
+export function getModelOptionsForFlavor(flavor: string | undefined | null, currentModel?: string | null, capabilities?: SessionCapabilities): ModelOption[] {
     if (flavor === 'gemini') {
-        return getGeminiModelOptions(currentModel)
+        return getGeminiModelOptions(currentModel, capabilities)
     }
     return getClaudeComposerModelOptions(currentModel)
 }
 
-export function getNextModelForFlavor(flavor: string | undefined | null, currentModel?: string | null): string | null {
+export function getNextModelForFlavor(flavor: string | undefined | null, currentModel?: string | null, capabilities?: SessionCapabilities): string | null {
     if (flavor === 'gemini') {
-        return getNextGeminiModel(currentModel)
+        return getNextGeminiModel(currentModel, capabilities)
     }
     return getNextClaudeComposerModel(currentModel)
 }

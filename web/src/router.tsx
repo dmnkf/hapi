@@ -426,7 +426,7 @@ function SessionPage() {
     const {
         commands: slashCommands,
         getSuggestions: getSlashSuggestions,
-    } = useSlashCommands(api, sessionId, agentType)
+    } = useSlashCommands(api, sessionId, agentType, session)
     const {
         getSuggestions: getSkillSuggestions,
     } = useSkills(api, sessionId)

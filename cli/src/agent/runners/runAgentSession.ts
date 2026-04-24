@@ -58,6 +58,12 @@ export async function runAgentSession(opts: {
     let currentPermissionMode: SessionPermissionMode = opts.permissionMode ?? sessionInfo.permissionMode ?? 'default';
 
     const backend: AgentBackend = AgentRegistry.create(opts.agentType);
+    backend.onSessionCapabilities?.((capabilities) => {
+        session.emitSessionCapabilities(capabilities);
+    });
+    backend.onSlashCommands?.((slashCommands) => {
+        session.emitSessionSlashCommands(slashCommands);
+    });
     await backend.initialize();
 
     const permissionAdapter = new PermissionAdapter(session, backend, () => currentPermissionMode);

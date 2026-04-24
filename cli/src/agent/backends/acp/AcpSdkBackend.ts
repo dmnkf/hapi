@@ -1,7 +1,13 @@
 import type { AgentBackend, AgentMessage, AgentSessionConfig, PermissionRequest, PermissionResponse, PromptContent } from '@/agent/types';
+import type { SessionCapabilities, SessionRuntimeSlashCommands } from '@hapi/protocol';
 import { asString, isObject } from '@hapi/protocol';
 import { AcpStdioTransport, type AcpStderrError } from './AcpStdioTransport';
 import { AcpMessageHandler } from './AcpMessageHandler';
+import {
+    capabilitiesFromAcpSessionData,
+    capabilitiesFromAcpUpdate,
+    slashCommandsFromAcpUpdate
+} from './discovery';
 import { logger } from '@/ui/logger';
 import { withRetry } from '@/utils/time';
 import packageJson from '../../../../package.json';
@@ -14,9 +20,12 @@ export class AcpSdkBackend implements AgentBackend {
     private transport: AcpStdioTransport | null = null;
     private permissionHandler: ((request: PermissionRequest) => void) | null = null;
     private stderrErrorHandler: ((error: AcpStderrError) => void) | null = null;
+    private sessionCapabilitiesHandler: ((capabilities: SessionCapabilities) => void) | null = null;
+    private slashCommandsHandler: ((slashCommands: SessionRuntimeSlashCommands) => void) | null = null;
     private readonly pendingPermissions = new Map<string, PendingPermission>();
     private messageHandler: AcpMessageHandler | null = null;
     private activeSessionId: string | null = null;
+    private currentCapabilities: SessionCapabilities | null = null;
     private isProcessingMessage = false;
     private responseCompleteResolvers: Array<() => void> = [];
     private lastSessionUpdateAt = 0;
@@ -108,6 +117,7 @@ export class AcpSdkBackend implements AgentBackend {
         }
 
         this.activeSessionId = sessionId;
+        this.publishSessionCapabilities(response);
         return sessionId;
     }
 
@@ -133,6 +143,7 @@ export class AcpSdkBackend implements AgentBackend {
         const loadedSessionId = isObject(response) ? asString(response.sessionId) : null;
         const sessionId = loadedSessionId ?? config.sessionId;
         this.activeSessionId = sessionId;
+        this.publishSessionCapabilities(response);
         return sessionId;
     }
 
@@ -229,6 +240,14 @@ export class AcpSdkBackend implements AgentBackend {
         this.stderrErrorHandler = handler;
     }
 
+    onSessionCapabilities(handler: (capabilities: SessionCapabilities) => void): void {
+        this.sessionCapabilitiesHandler = handler;
+    }
+
+    onSlashCommands(handler: (slashCommands: SessionRuntimeSlashCommands) => void): void {
+        this.slashCommandsHandler = handler;
+    }
+
     /**
      * Returns true if currently processing a message (prompt in progress).
      * Useful for checking if it's safe to perform session operations.
@@ -275,7 +294,31 @@ export class AcpSdkBackend implements AgentBackend {
         }
         this.lastSessionUpdateAt = Date.now();
         const update = params.update;
+        this.publishDiscoveryUpdate(update);
         this.messageHandler?.handleUpdate(update);
+    }
+
+    private publishSessionCapabilities(data: unknown): void {
+        const capabilities = capabilitiesFromAcpSessionData(data, this.currentCapabilities);
+        if (!capabilities) {
+            return;
+        }
+        this.currentCapabilities = capabilities;
+        this.sessionCapabilitiesHandler?.(capabilities);
+    }
+
+    private publishDiscoveryUpdate(update: unknown): void {
+        const slashCommands = slashCommandsFromAcpUpdate(update);
+        if (slashCommands) {
+            this.slashCommandsHandler?.(slashCommands);
+        }
+
+        const capabilities = capabilitiesFromAcpUpdate(update, this.currentCapabilities);
+        if (!capabilities) {
+            return;
+        }
+        this.currentCapabilities = capabilities;
+        this.sessionCapabilitiesHandler?.(capabilities);
     }
 
     private async waitForSessionUpdateQuiet(quietMs: number, timeoutMs: number): Promise<void> {

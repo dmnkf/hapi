@@ -26,6 +26,21 @@ describe('getModelOptionsForFlavor', () => {
         const flashCount = options.filter((o) => o.value === 'gemini-2.5-flash').length
         expect(flashCount).toBe(1)
     })
+
+    it('prefers runtime Gemini model capabilities when present', () => {
+        const options = getModelOptionsForFlavor('gemini', null, {
+            models: [
+                { id: 'runtime-fast', label: 'Runtime Fast' },
+                { id: 'runtime-deep', label: 'Runtime Deep' }
+            ],
+            source: 'dynamic'
+        })
+        expect(options).toEqual([
+            { value: null, label: 'Auto' },
+            { value: 'runtime-fast', label: 'Runtime Fast' },
+            { value: 'runtime-deep', label: 'Runtime Deep' }
+        ])
+    })
 })
 
 describe('getNextModelForFlavor', () => {

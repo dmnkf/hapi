@@ -33,3 +33,10 @@ export type {
 } from './modes'
 
 export type { ClaudeModelPreset, GeminiModelPreset } from './models'
+
+export type {
+    ModelCapability,
+    RuntimeSlashCommand,
+    SessionCapabilities,
+    SessionRuntimeSlashCommands
+} from './capabilities'

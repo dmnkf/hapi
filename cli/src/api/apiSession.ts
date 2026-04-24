@@ -517,6 +517,10 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.emit('session-capabilities', { sid: this.sessionId, capabilities })
     }
 
+    emitSessionSlashCommands(slashCommands: import('@hapi/protocol').SessionRuntimeSlashCommands): void {
+        this.socket.emit('session-slash-commands', { sid: this.sessionId, slashCommands })
+    }
+
     sendSessionDeath(): void {
         void cleanupUploadDir(this.sessionId)
         this.socket.emit('session-end', { sid: this.sessionId, time: Date.now() })

@@ -1,4 +1,4 @@
-import type { SessionCapabilities } from '@hapi/protocol'
+import type { SessionCapabilities, SessionRuntimeSlashCommands } from '@hapi/protocol'
 import type { CodexCollaborationMode, PermissionMode } from '@hapi/protocol/types'
 import type { Store, StoredMachine, StoredSession } from '../../../store'
 import type { RpcRegistry } from '../../rpcRegistry'
@@ -41,13 +41,14 @@ export type CliHandlersDeps = {
     onSessionAlive?: (payload: SessionAlivePayload) => void
     onSessionEnd?: (payload: SessionEndPayload) => void
     onSessionCapabilities?: (sessionId: string, capabilities: SessionCapabilities) => void
+    onSessionSlashCommands?: (sessionId: string, slashCommands: SessionRuntimeSlashCommands) => void
     onMachineAlive?: (payload: MachineAlivePayload) => void
     onWebappEvent?: (event: SyncEvent) => void
     onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
 }
 
 export function registerCliHandlers(socket: CliSocketWithData, deps: CliHandlersDeps): void {
-    const { io, store, rpcRegistry, terminalRegistry, onSessionAlive, onSessionEnd, onSessionCapabilities, onMachineAlive, onWebappEvent, onBackgroundTaskDelta } = deps
+    const { io, store, rpcRegistry, terminalRegistry, onSessionAlive, onSessionEnd, onSessionCapabilities, onSessionSlashCommands, onMachineAlive, onWebappEvent, onBackgroundTaskDelta } = deps
     const terminalNamespace = io.of('/terminal')
     const namespace = typeof socket.data.namespace === 'string' ? socket.data.namespace : null
 
@@ -107,6 +108,7 @@ export function registerCliHandlers(socket: CliSocketWithData, deps: CliHandlers
         onSessionAlive,
         onSessionEnd,
         onSessionCapabilities,
+        onSessionSlashCommands,
         onWebappEvent,
         onBackgroundTaskDelta
     })

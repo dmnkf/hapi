@@ -21,5 +21,22 @@ export const SessionCapabilitiesSchema = z.object({
     probedAt: z.number().optional()
 })
 
+export const RuntimeSlashCommandSchema = z.object({
+    name: z.string().min(1),
+    description: z.string().optional(),
+    source: z.literal('runtime').optional().default('runtime'),
+    content: z.string().optional(),
+    pluginName: z.string().optional(),
+    inputHint: z.string().optional()
+})
+
+export const SessionRuntimeSlashCommandsSchema = z.object({
+    commands: z.array(RuntimeSlashCommandSchema),
+    source: z.enum(['dynamic', 'static']).optional(),
+    updatedAt: z.number().optional()
+})
+
 export type ModelCapability = z.infer<typeof ModelCapabilitySchema>
 export type SessionCapabilities = z.infer<typeof SessionCapabilitiesSchema>
+export type RuntimeSlashCommand = z.infer<typeof RuntimeSlashCommandSchema>
+export type SessionRuntimeSlashCommands = z.infer<typeof SessionRuntimeSlashCommandsSchema>

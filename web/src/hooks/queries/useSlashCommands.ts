@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 import type { ApiClient } from '@/api/client'
-import type { SlashCommand } from '@/types/api'
+import type { Session, SlashCommand } from '@/types/api'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { queryKeys } from '@/lib/query-keys'
 import { getBuiltinSlashCommands } from '@/lib/codexSlashCommands'
@@ -22,10 +22,60 @@ function levenshteinDistance(a: string, b: string): number {
     return matrix[b.length][a.length]
 }
 
+function normalizeRuntimeName(name: string): string {
+    return name.startsWith('/') ? name.slice(1) : name
+}
+
+function mergeCommands(commands: SlashCommand[]): SlashCommand[] {
+    const byName = new Map<string, SlashCommand>()
+    for (const command of commands) {
+        if (byName.has(command.name)) {
+            byName.delete(command.name)
+        }
+        byName.set(command.name, command)
+    }
+    return Array.from(byName.values())
+}
+
+function runtimeCommandsFromSession(session?: Session | null): SlashCommand[] {
+    const runtimeCommands = session?.runtimeSlashCommands?.commands
+    if (runtimeCommands && runtimeCommands.length > 0) {
+        return runtimeCommands.map((command) => ({
+            ...command,
+            name: normalizeRuntimeName(command.name),
+            source: 'runtime' as const
+        }))
+    }
+
+    const metadataCommands = session?.metadata?.slashCommands
+    if (!metadataCommands || metadataCommands.length === 0) {
+        return []
+    }
+
+    return metadataCommands
+        .map((command) => normalizeRuntimeName(command.trim()))
+        .filter((command) => command.length > 0)
+        .map((command) => ({
+            name: command,
+            source: 'runtime' as const
+        }))
+}
+
+function suggestionDescription(command: SlashCommand): string | undefined {
+    if (command.description) {
+        return command.description
+    }
+    if (command.source === 'builtin' || command.source === 'runtime') {
+        return undefined
+    }
+    return 'Custom command'
+}
+
 export function useSlashCommands(
     api: ApiClient | null,
     sessionId: string | null,
-    agentType: string = 'claude'
+    agentType: string = 'claude',
+    session?: Session | null
 ): {
     commands: SlashCommand[]
     isLoading: boolean
@@ -44,26 +94,34 @@ export function useSlashCommands(
             return await api.getSlashCommands(sessionId)
         },
         enabled: Boolean(api && sessionId),
-        staleTime: Infinity,
+        staleTime: 5_000,
         gcTime: 30 * 60 * 1000,
         retry: false, // Don't retry RPC failures
     })
 
-    // Merge built-in commands with user-defined and plugin commands from API
+    // Runtime commands replace hardcoded built-ins; custom file/plugin commands
+    // still merge in so local prompt files can provide expanded content.
     const commands = useMemo(() => {
         const builtin = getBuiltinSlashCommands(agentType)
+        const sessionRuntime = runtimeCommandsFromSession(session)
 
-        // If API succeeded, add user-defined and plugin commands
-        if (query.data?.success && query.data.commands) {
-            const extraCommands = query.data.commands.filter(
-                cmd => cmd.source === 'user' || cmd.source === 'plugin' || cmd.source === 'project'
-            )
-            return [...builtin, ...extraCommands]
-        }
+        const apiCommands = query.data?.success && query.data.commands
+            ? query.data.commands
+            : []
+        const apiRuntime = apiCommands.filter(cmd => cmd.source === 'runtime')
+        const customCommands = apiCommands.filter(
+            cmd => cmd.source === 'user' || cmd.source === 'plugin' || cmd.source === 'project'
+        )
+        const baseCommands = sessionRuntime.length > 0
+            ? sessionRuntime
+            : apiRuntime.length > 0
+                ? apiRuntime
+                : builtin
 
-        // Fallback to built-in commands only
-        return builtin
-    }, [agentType, query.data])
+        return mergeCommands([...baseCommands, ...customCommands])
+    }, [agentType, query.data, session])
+
+    const isRuntimeReady = runtimeCommandsFromSession(session).length > 0
 
     const getSuggestions = useCallback(async (queryText: string): Promise<Suggestion[]> => {
         const searchTerm = queryText.startsWith('/')
@@ -75,7 +133,7 @@ export function useSlashCommands(
                 key: `/${cmd.name}`,
                 text: `/${cmd.name}`,
                 label: `/${cmd.name}`,
-                description: cmd.description ?? (cmd.source === 'builtin' ? undefined : 'Custom command'),
+                description: suggestionDescription(cmd),
                 content: cmd.content,
                 source: cmd.source
             }))
@@ -101,7 +159,7 @@ export function useSlashCommands(
                 key: `/${cmd.name}`,
                 text: `/${cmd.name}`,
                 label: `/${cmd.name}`,
-                description: cmd.description ?? (cmd.source === 'builtin' ? undefined : 'Custom command'),
+                description: suggestionDescription(cmd),
                 content: cmd.content,
                 source: cmd.source
             }))
@@ -109,7 +167,7 @@ export function useSlashCommands(
 
     return {
         commands,
-        isLoading: query.isLoading,
+        isLoading: isRuntimeReady ? false : query.isLoading,
         error: query.error instanceof Error ? query.error.message : query.error ? 'Failed to load commands' : null,
         getSuggestions,
     }

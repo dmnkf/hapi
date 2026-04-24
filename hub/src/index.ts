@@ -180,6 +180,7 @@ async function main() {
         onSessionAlive: (payload) => syncEngine?.handleSessionAlive(payload),
         onSessionEnd: (payload) => syncEngine?.handleSessionEnd(payload),
         onSessionCapabilities: (sessionId, capabilities) => syncEngine?.handleSessionCapabilities(sessionId, capabilities),
+        onSessionSlashCommands: (sessionId, slashCommands) => syncEngine?.handleSessionSlashCommands(sessionId, slashCommands),
         onMachineAlive: (payload) => syncEngine?.handleMachineAlive(payload),
         onBackgroundTaskDelta: (sessionId, delta) => syncEngine?.handleBackgroundTaskDelta(sessionId, delta)
     })
