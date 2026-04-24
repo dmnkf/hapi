@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import type { CSSProperties } from 'react'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
@@ -38,6 +38,9 @@ import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message
 import { clearDraftsAfterSend } from '@/lib/clearDraftsAfterSend'
 import type { Machine } from '@/types/api'
 import { SessionTabBar } from '@/components/SessionTabBar'
+import { FocusBanner } from '@/components/FocusBanner'
+import { enterFocusQueue, syncFocusIndexToSession } from '@/lib/focusQueue'
+import { useFocusQueue } from '@/hooks/useFocusQueue'
 import FilesPage from '@/routes/sessions/files'
 import FilePage from '@/routes/sessions/file'
 import TerminalPage from '@/routes/sessions/terminal'
@@ -144,6 +147,35 @@ function SessionsPage() {
         const connectedMachines = machines.filter(m => m.active).length
         return { active, pending, thinking, connectedMachines }
     }, [sessions, machines])
+
+    const enterFocus = useCallback(() => {
+        let machineFilter: string | null = null
+        try {
+            const stored = localStorage.getItem('hapi:sessionMachineFilter')
+            if (stored && stored !== 'all') machineFilter = stored
+        } catch { /* ignore */ }
+
+        const pendingIds = sessions
+            .filter(s => s.pendingRequestsCount > 0)
+            .filter(s => {
+                if (!machineFilter) return true
+                const id = s.metadata?.machineId ?? '__unknown__'
+                return id === machineFilter
+            })
+            .sort((a, b) => b.updatedAt - a.updatedAt)
+            .map(s => s.id)
+
+        const first = enterFocusQueue(pendingIds)
+        if (first) {
+            startViewTransition(() =>
+                navigate({
+                    to: '/sessions/$sessionId',
+                    params: { sessionId: first },
+                    search: { focus: 1 },
+                })
+            )
+        }
+    }, [sessions, navigate])
     const machineLabelsById = useMemo(() => {
         const labels: Record<string, string> = {}
         for (const machine of machines) {
@@ -201,10 +233,15 @@ function SessionsPage() {
                                 </span>
                             ) : null}
                             {stats.pending > 0 ? (
-                                <span className="inline-flex items-center gap-1 text-[var(--app-badge-warning-text)]">
+                                <button
+                                    type="button"
+                                    onClick={enterFocus}
+                                    title={t('focus.enter')}
+                                    className="inline-flex items-center gap-1 rounded-full text-[var(--app-badge-warning-text)] transition-colors hover:bg-[var(--app-subtle-bg)] px-1.5 -mx-1.5 py-0.5"
+                                >
                                     <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-badge-warning-text)]" />
                                     {t('dashboard.pending', { n: stats.pending })}
-                                </span>
+                                </button>
                             ) : null}
                             <span className="inline-flex items-center gap-1 text-[var(--app-hint)]">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
@@ -488,6 +525,14 @@ function SessionDetailRoute() {
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
     const basePath = `/sessions/${sessionId}`
     const isChat = pathname === basePath || pathname === `${basePath}/`
+    const focusQueue = useFocusQueue()
+    const isFocusActive = focusQueue.active && focusQueue.ids.includes(sessionId)
+
+    useEffect(() => {
+        if (isFocusActive) {
+            syncFocusIndexToSession(sessionId)
+        }
+    }, [sessionId, isFocusActive])
 
     const handleSwipeBack = useCallback(() => {
         startViewTransition(() => navigate({ to: '/sessions' }), 'back')
@@ -500,6 +545,7 @@ function SessionDetailRoute() {
             className="flex h-full min-h-0 flex-col [--app-floating-bottom-offset:52px] lg:[--app-floating-bottom-offset:0px]"
         >
             <SwipeBackIndicator offset={swipeOffset} progress={swipeProgress} />
+            {isFocusActive ? <FocusBanner sessionId={sessionId} /> : null}
             <div className="flex-1 min-h-0">
                 {isChat ? <SessionPage /> : <Outlet />}
             </div>
@@ -595,6 +641,10 @@ const sessionsIndexRoute = createRoute({
 const sessionDetailRoute = createRoute({
     getParentRoute: () => sessionsRoute,
     path: '$sessionId',
+    validateSearch: (search: Record<string, unknown>): { focus?: 1 } => {
+        const focus = search.focus === 1 || search.focus === '1' || search.focus === true
+        return focus ? { focus: 1 } : {}
+    },
     component: SessionDetailRoute,
 })
 
