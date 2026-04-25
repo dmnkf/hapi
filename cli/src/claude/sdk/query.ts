@@ -315,13 +315,16 @@ export function query(config: {
             settingsPath,
             strictMcpConfig,
             canCallTool,
-            promptFailureCleanupTimeoutMs = DEFAULT_PROMPT_FAILURE_CLEANUP_TIMEOUT_MS
+            promptFailureCleanupTimeoutMs = DEFAULT_PROMPT_FAILURE_CLEANUP_TIMEOUT_MS,
+            claudeCodeEntrypoint = 'sdk-ts'
         } = {}
     } = config
 
-    // Set entrypoint if not already set
-    if (!process.env.CLAUDE_CODE_ENTRYPOINT) {
-        process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts'
+    const claudeEnv: NodeJS.ProcessEnv = { ...process.env }
+    if (claudeCodeEntrypoint === null) {
+        delete claudeEnv.CLAUDE_CODE_ENTRYPOINT
+    } else if (!claudeEnv.CLAUDE_CODE_ENTRYPOINT) {
+        claudeEnv.CLAUDE_CODE_ENTRYPOINT = claudeCodeEntrypoint
     }
 
     // Build command arguments
@@ -378,7 +381,7 @@ export function query(config: {
     cleanupMcpConfig = appendMcpConfigArg(spawnArgs, mcpServers)
 
     // Spawn Claude Code process
-    const spawnEnv = withBunRuntimeEnv(process.env, { allowBunBeBun: false })
+    const spawnEnv = withBunRuntimeEnv(claudeEnv, { allowBunBeBun: false })
     logDebug(`Spawning Claude Code process: ${spawnCommand} ${spawnArgs.join(' ')}`)
 
     const child = spawn(spawnCommand, spawnArgs, {
