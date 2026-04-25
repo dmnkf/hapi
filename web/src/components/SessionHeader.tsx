@@ -157,18 +157,22 @@ export function SessionHeader(props: {
                         <div className="truncate text-[15px] font-semibold leading-tight">
                             {title}
                         </div>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-[var(--app-hint)] leading-tight">
-                            <span className="inline-flex items-center gap-1">
+                        <div className="mt-0.5 flex items-center gap-1.5 overflow-hidden text-[11px] text-[var(--app-hint)] leading-tight">
+                            <span className="inline-flex shrink-0 items-center gap-1">
                                 <span aria-hidden="true">❖</span>
                                 {session.metadata?.flavor?.trim() || 'unknown'}
                             </span>
                             {modelLabel ? (
-                                <span>
-                                    {t(modelLabel.key)}: {modelLabel.value}
-                                </span>
+                                <>
+                                    <span aria-hidden="true" className="shrink-0">·</span>
+                                    <span className="truncate">{modelLabel.value}</span>
+                                </>
                             ) : null}
                             {worktreeBranch ? (
-                                <span>{t('session.item.worktree')}: {worktreeBranch}</span>
+                                <>
+                                    <span aria-hidden="true" className="shrink-0">·</span>
+                                    <span className="truncate">{worktreeBranch}</span>
+                                </>
                             ) : null}
                         </div>
                     </div>
