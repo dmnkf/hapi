@@ -10,6 +10,7 @@ import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { getHappyCliCommand } from '@/utils/spawnHappyCLI';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { bootstrapSession } from '@/agent/sessionFactory';
+import { setControlledByUser } from '@/agent/runnerLifecycle';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { getInvokedCwd } from '@/utils/invokedCwd';
 import { PermissionModeSchema } from '@hapi/protocol/schemas';
@@ -30,23 +31,25 @@ function emitReadyIfIdle(props: {
 export async function runAgentSession(opts: {
     agentType: string;
     startedBy?: 'runner' | 'terminal';
+    startingMode?: 'local' | 'remote';
     permissionMode?: SessionPermissionMode;
 }): Promise<void> {
     const workingDirectory = getInvokedCwd();
+    const startedBy = opts.startedBy ?? 'terminal';
+    const startingMode: 'local' | 'remote' = startedBy === 'runner'
+        ? 'remote'
+        : opts.startingMode ?? 'local';
     const initialState: AgentState = {
-        controlledByUser: false
+        controlledByUser: startingMode === 'local'
     };
     const { session, sessionInfo } = await bootstrapSession({
         flavor: opts.agentType,
-        startedBy: opts.startedBy ?? 'terminal',
+        startedBy,
         workingDirectory,
         agentState: initialState
     });
 
-    session.updateAgentState((currentState) => ({
-        ...currentState,
-        controlledByUser: false
-    }));
+    setControlledByUser(session, startingMode);
 
     const messageQueue = new MessageQueue2<Record<string, never>>(() => hashObject({}));
 
@@ -89,7 +92,7 @@ export async function runAgentSession(opts: {
     let waitAbortController: AbortController | null = null;
 
     const syncKeepAlive = () => {
-        session.keepAlive(thinking, 'remote', {
+        session.keepAlive(thinking, startingMode, {
             permissionMode: currentPermissionMode
         });
     };
