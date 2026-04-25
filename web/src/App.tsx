@@ -255,7 +255,7 @@ function AppInner() {
         return { all: true }
     }, [selectedSessionId])
 
-    const { subscriptionId } = useSSE({
+    const { subscriptionId, reconnect: reconnectSse } = useSSE({
         enabled: Boolean(api && token),
         token: token ?? '',
         baseUrl,
@@ -265,11 +265,15 @@ function AppInner() {
         onEvent: handleSseEvent,
         onToast: handleToast
     })
+    const handleSubscriptionMissing = useCallback(() => {
+        reconnectSse('subscription-missing')
+    }, [reconnectSse])
 
     useVisibilityReporter({
         api,
         subscriptionId,
-        enabled: Boolean(api && token)
+        enabled: Boolean(api && token),
+        onSubscriptionMissing: handleSubscriptionMissing
     })
 
     // Loading auth source

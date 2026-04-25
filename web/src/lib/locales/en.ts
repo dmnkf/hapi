@@ -268,6 +268,7 @@ export default {
   'reconnecting.reason.closed': 'stream closed',
   'reconnecting.reason.heartbeatTimeout': 'heartbeat timeout',
   'reconnecting.reason.visibilityRecovery': 'resuming after background',
+  'reconnecting.reason.subscriptionMissing': 'stream expired',
 
   // Send blocked
   'send.blocked.title': 'Cannot send message',

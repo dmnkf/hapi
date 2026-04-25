@@ -4,9 +4,13 @@ import { asString, isObject } from '@hapi/protocol';
 import { AcpStdioTransport, type AcpStderrError } from './AcpStdioTransport';
 import { AcpMessageHandler } from './AcpMessageHandler';
 import {
+    configOptionIdsFromAcpSessionData,
     capabilitiesFromAcpSessionData,
     capabilitiesFromAcpUpdate,
-    slashCommandsFromAcpUpdate
+    slashCommandsFromAcpUpdate,
+    type AcpConfigOptionIds,
+    type AcpConfigOptionKind,
+    type AcpDiscoveryOptions
 } from './discovery';
 import { logger } from '@/ui/logger';
 import { withRetry } from '@/utils/time';
@@ -26,6 +30,7 @@ export class AcpSdkBackend implements AgentBackend {
     private messageHandler: AcpMessageHandler | null = null;
     private activeSessionId: string | null = null;
     private currentCapabilities: SessionCapabilities | null = null;
+    private configOptionIds: AcpConfigOptionIds = {};
     private isProcessingMessage = false;
     private responseCompleteResolvers: Array<() => void> = [];
     private lastSessionUpdateAt = 0;
@@ -41,7 +46,12 @@ export class AcpSdkBackend implements AgentBackend {
     private static readonly PRE_PROMPT_UPDATE_QUIET_PERIOD_MS = 200;
     private static readonly PRE_PROMPT_UPDATE_DRAIN_TIMEOUT_MS = 1200;
 
-    constructor(private readonly options: { command: string; args?: string[]; env?: Record<string, string> }) {}
+    constructor(private readonly options: {
+        command: string;
+        args?: string[];
+        env?: Record<string, string>;
+        discovery?: AcpDiscoveryOptions;
+    }) {}
 
     async initialize(): Promise<void> {
         if (this.transport) return;
@@ -248,6 +258,24 @@ export class AcpSdkBackend implements AgentBackend {
         this.slashCommandsHandler = handler;
     }
 
+    getConfigOptionId(kind: AcpConfigOptionKind): string | null {
+        return this.configOptionIds[kind] ?? null;
+    }
+
+    async setSessionConfigOption(sessionId: string, configId: string, value: string): Promise<unknown> {
+        if (!this.transport) {
+            throw new Error('ACP transport not initialized');
+        }
+
+        const response = await this.transport.sendRequest('session/set_config_option', {
+            sessionId,
+            configId,
+            value
+        });
+        this.publishSessionCapabilities(response);
+        return response;
+    }
+
     /**
      * Returns true if currently processing a message (prompt in progress).
      * Useful for checking if it's safe to perform session operations.
@@ -299,7 +327,12 @@ export class AcpSdkBackend implements AgentBackend {
     }
 
     private publishSessionCapabilities(data: unknown): void {
-        const capabilities = capabilitiesFromAcpSessionData(data, this.currentCapabilities);
+        this.configOptionIds = {
+            ...this.configOptionIds,
+            ...configOptionIdsFromAcpSessionData(data)
+        };
+
+        const capabilities = capabilitiesFromAcpSessionData(data, this.currentCapabilities, this.options.discovery);
         if (!capabilities) {
             return;
         }
@@ -313,7 +346,12 @@ export class AcpSdkBackend implements AgentBackend {
             this.slashCommandsHandler?.(slashCommands);
         }
 
-        const capabilities = capabilitiesFromAcpUpdate(update, this.currentCapabilities);
+        this.configOptionIds = {
+            ...this.configOptionIds,
+            ...configOptionIdsFromAcpSessionData(update)
+        };
+
+        const capabilities = capabilitiesFromAcpUpdate(update, this.currentCapabilities, this.options.discovery);
         if (!capabilities) {
             return;
         }

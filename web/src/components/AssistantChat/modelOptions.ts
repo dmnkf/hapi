@@ -5,14 +5,18 @@ import type { SessionCapabilities } from '@hapi/protocol'
 
 export type ModelOption = ClaudeComposerModelOption
 
-function getRuntimeModelOptions(currentModel?: string | null, capabilities?: SessionCapabilities): ModelOption[] | null {
+function getRuntimeModelOptions(
+    currentModel?: string | null,
+    capabilities?: SessionCapabilities,
+    opts?: { includeAuto?: boolean; autoLabel?: string }
+): ModelOption[] | null {
     const runtimeModels = capabilities?.models
     if (!runtimeModels || runtimeModels.length === 0) {
         return null
     }
 
     const options = [
-        { value: null, label: 'Auto' },
+        ...(opts?.includeAuto === false ? [] : [{ value: null, label: opts?.autoLabel ?? 'Auto' }]),
         ...runtimeModels.map((model) => ({
             value: model.id,
             label: model.label ?? model.id
@@ -51,9 +55,25 @@ function getNextGeminiModel(currentModel?: string | null, capabilities?: Session
     return options[(currentIndex + 1) % options.length]?.value ?? null
 }
 
+function getCodexModelOptions(currentModel?: string | null, capabilities?: SessionCapabilities): ModelOption[] {
+    return getRuntimeModelOptions(currentModel, capabilities, { includeAuto: false }) ?? []
+}
+
+function getNextCodexModel(currentModel?: string | null, capabilities?: SessionCapabilities): string | null {
+    const options = getCodexModelOptions(currentModel, capabilities)
+    const currentIndex = options.findIndex((o) => o.value === (currentModel ?? null))
+    if (currentIndex === -1) {
+        return options[0]?.value ?? null
+    }
+    return options[(currentIndex + 1) % options.length]?.value ?? null
+}
+
 export function getModelOptionsForFlavor(flavor: string | undefined | null, currentModel?: string | null, capabilities?: SessionCapabilities): ModelOption[] {
     if (flavor === 'gemini') {
         return getGeminiModelOptions(currentModel, capabilities)
+    }
+    if (flavor === 'codex') {
+        return getCodexModelOptions(currentModel, capabilities)
     }
     return getClaudeComposerModelOptions(currentModel)
 }
@@ -61,6 +81,9 @@ export function getModelOptionsForFlavor(flavor: string | undefined | null, curr
 export function getNextModelForFlavor(flavor: string | undefined | null, currentModel?: string | null, capabilities?: SessionCapabilities): string | null {
     if (flavor === 'gemini') {
         return getNextGeminiModel(currentModel, capabilities)
+    }
+    if (flavor === 'codex') {
+        return getNextCodexModel(currentModel, capabilities)
     }
     return getNextClaudeComposerModel(currentModel)
 }

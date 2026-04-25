@@ -96,6 +96,126 @@ describe('AcpSdkBackend', () => {
         ]);
     });
 
+    it('can suppress ACP modes when they are runtime permission presets', async () => {
+        const backend = new AcpSdkBackend({
+            command: 'codex-acp',
+            discovery: {
+                exposeModeConfigAsCollaborationModes: false
+            }
+        });
+        const capabilities: SessionCapabilities[] = [];
+        backend.onSessionCapabilities((value) => capabilities.push(value));
+
+        const backendInternal = backend as unknown as {
+            transport: {
+                sendRequest: (...args: unknown[]) => Promise<unknown>;
+            } | null;
+        };
+
+        backendInternal.transport = {
+            sendRequest: async () => ({
+                sessionId: 'session-1',
+                configOptions: [
+                    {
+                        id: 'mode',
+                        name: 'Mode',
+                        category: 'mode',
+                        currentValue: 'suggest',
+                        options: [
+                            { value: 'read-only', name: 'Read Only' },
+                            { value: 'suggest', name: 'Suggest' },
+                            { value: 'auto-edit', name: 'Auto Edit' },
+                            { value: 'full-auto', name: 'Full Auto' }
+                        ]
+                    },
+                    {
+                        id: 'model',
+                        name: 'Model',
+                        category: 'model',
+                        currentValue: 'gpt-5.4',
+                        options: [
+                            { value: 'gpt-5.4', name: 'GPT-5.4' }
+                        ]
+                    }
+                ],
+                modes: {
+                    currentModeId: 'suggest',
+                    availableModes: ['read-only', 'suggest', 'auto-edit', 'full-auto']
+                }
+            })
+        };
+
+        await backend.newSession({ cwd: '/tmp', mcpServers: [] });
+
+        expect(capabilities).toEqual([
+            {
+                models: [
+                    { id: 'gpt-5.4', label: 'GPT-5.4', isDefault: true }
+                ],
+                source: 'dynamic',
+                probedAt: expect.any(Number)
+            }
+        ]);
+        expect(backend.getConfigOptionId('mode')).toBe('mode');
+        expect(backend.getConfigOptionId('model')).toBe('model');
+    });
+
+    it('sends ACP session config option updates and republishes returned capabilities', async () => {
+        const backend = new AcpSdkBackend({ command: 'codex-acp' });
+        const calls: Array<{ method: string; params: unknown }> = [];
+        const capabilities: SessionCapabilities[] = [];
+        backend.onSessionCapabilities((value) => capabilities.push(value));
+
+        const backendInternal = backend as unknown as {
+            transport: {
+                sendRequest: (...args: unknown[]) => Promise<unknown>;
+            } | null;
+        };
+
+        backendInternal.transport = {
+            sendRequest: async (method, params) => {
+                calls.push({ method: String(method), params });
+                return {
+                    configOptions: [
+                        {
+                            id: 'model',
+                            name: 'Model',
+                            category: 'model',
+                            currentValue: 'gpt-5.4',
+                            options: [
+                                { value: 'gpt-5.4', name: 'GPT-5.4' },
+                                { value: 'o3', name: 'o3' }
+                            ]
+                        }
+                    ]
+                };
+            }
+        };
+
+        await backend.setSessionConfigOption('session-1', 'model', 'gpt-5.4');
+
+        expect(calls).toEqual([
+            {
+                method: 'session/set_config_option',
+                params: {
+                    sessionId: 'session-1',
+                    configId: 'model',
+                    value: 'gpt-5.4'
+                }
+            }
+        ]);
+        expect(capabilities).toEqual([
+            {
+                models: [
+                    { id: 'gpt-5.4', label: 'GPT-5.4', isDefault: true },
+                    { id: 'o3', label: 'o3', isDefault: undefined }
+                ],
+                source: 'dynamic',
+                probedAt: expect.any(Number)
+            }
+        ]);
+    });
+
     it('emits runtime slash commands and capability updates from ACP notifications', () => {
         const backend = new AcpSdkBackend({ command: 'opencode' });
         const capabilities: SessionCapabilities[] = [];

@@ -8,6 +8,9 @@ function getReasonLabel(reason: string, t: (key: string) => string): string {
     if (reason === 'visibility-recovery') {
         return t('reconnecting.reason.visibilityRecovery')
     }
+    if (reason === 'subscription-missing') {
+        return t('reconnecting.reason.subscriptionMissing')
+    }
     if (reason === 'closed') {
         return t('reconnecting.reason.closed')
     }

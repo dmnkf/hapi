@@ -184,15 +184,25 @@ function splitArgs(value: string): string[] {
     return args;
 }
 
-export function registerCodexAcpAgent(): void {
+export function createCodexAcpBackend(): AcpSdkBackend {
     const command = process.env.HAPI_CODEX_ACP_COMMAND || 'npx';
     const args = process.env.HAPI_CODEX_ACP_ARGS
         ? splitArgs(process.env.HAPI_CODEX_ACP_ARGS)
         : ['-y', '@zed-industries/codex-acp'];
 
-    AgentRegistry.register('codex', () => new AcpSdkBackend({
+    return new AcpSdkBackend({
         command,
         args,
-        env: buildEnv()
-    }));
+        env: buildEnv(),
+        discovery: {
+            // codex-acp's ACP "mode" is an approval preset
+            // (read-only/suggest/auto-edit/full-auto), not HAPI's Codex
+            // collaboration mode selector.
+            exposeModeConfigAsCollaborationModes: false
+        }
+    });
+}
+
+export function registerCodexAcpAgent(): void {
+    AgentRegistry.register('codex', () => createCodexAcpBackend());
 }

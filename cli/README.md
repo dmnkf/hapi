@@ -27,6 +27,7 @@ Run Claude Code, Codex, Cursor Agent, Gemini, or OpenCode sessions from your ter
 - `hapi` - Start a Claude Code session (passes through Claude CLI flags). See `src/index.ts`.
 - `hapi codex` - Start Codex mode. See `src/codex/runCodex.ts`.
 - `hapi codex resume <sessionId>` - Resume existing Codex session.
+- `hapi codex-acp` - Start the experimental Codex ACP runner through `@zed-industries/codex-acp`.
 - `hapi cursor` - Start Cursor Agent mode. See `src/cursor/runCursor.ts`.
   Supports `hapi cursor resume <chatId>`, `hapi cursor --continue`, `--mode plan|ask`, `--yolo`, `--model`.
   Local and remote modes supported; remote uses `agent -p` with stream-json.
@@ -82,6 +83,9 @@ See `src/configuration.ts` for all options.
 - `HAPI_EXPERIMENTAL` - Enable experimental features (true/1/yes).
 - `HAPI_EXTRA_HEADERS_JSON` - JSON object of extra headers to send on CLI → hub requests, e.g. `{"Cookie":"CF_Authorization=..."}`.
 - `HAPI_CLAUDE_PATH` - Path to a specific `claude` executable.
+- `HAPI_CODEX_BACKEND` - Codex remote backend: `app-server` (default), `acp`, or `auto`.
+- `HAPI_CODEX_ACP_COMMAND` - Override the Codex ACP command (default: `npx`).
+- `HAPI_CODEX_ACP_ARGS` - Override Codex ACP args (default: `-y @zed-industries/codex-acp`).
 - `HAPI_HTTP_MCP_URL` - Default MCP target for `hapi mcp`.
 
 ### Runner

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { ApiError } from '@/api/client'
 import type { ApiClient } from '@/api/client'
 
 type VisibilityState = 'visible' | 'hidden'
@@ -10,10 +11,15 @@ function getVisibilityState(): VisibilityState {
     return document.visibilityState === 'visible' ? 'visible' : 'hidden'
 }
 
+function isMissingSubscriptionError(error: unknown): boolean {
+    return error instanceof ApiError && error.status === 404 && error.code === 'Subscription not found'
+}
+
 export function useVisibilityReporter(options: {
     api: ApiClient | null
     subscriptionId: string | null
     enabled?: boolean
+    onSubscriptionMissing?: () => void
 }): void {
     const lastStateRef = useRef<VisibilityState | null>(null)
     const lastSubscriptionRef = useRef<string | null>(null)
@@ -87,6 +93,13 @@ export function useVisibilityReporter(options: {
                     return
                 }
                 hadError = true
+                if (isMissingSubscriptionError(error)) {
+                    pendingStateRef.current = null
+                    lastStateRef.current = null
+                    clearRetry()
+                    options.onSubscriptionMissing?.()
+                    return
+                }
                 console.error('Failed to update visibility:', error)
                 if (!retryTimerRef.current) {
                     retryTimerRef.current = setTimeout(() => {
@@ -118,5 +131,5 @@ export function useVisibilityReporter(options: {
             clearRetry()
             inFlightRef.current = false
         }
-    }, [options.api, options.enabled, options.subscriptionId])
+    }, [options.api, options.enabled, options.onSubscriptionMissing, options.subscriptionId])
 }

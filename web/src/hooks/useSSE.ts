@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { isObject, toSessionSummary } from '@hapi/protocol'
 import type {
@@ -190,7 +190,7 @@ export function useSSE(options: {
     onDisconnect?: (reason: string) => void
     onError?: (error: unknown) => void
     onToast?: (event: ToastEvent) => void
-}): { subscriptionId: string | null } {
+}): { subscriptionId: string | null; reconnect: (reason?: string) => void } {
     const queryClient = useQueryClient()
     const onEventRef = useRef(options.onEvent)
     const onConnectRef = useRef(options.onConnect)
@@ -207,8 +207,12 @@ export function useSSE(options: {
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const reconnectAttemptRef = useRef(0)
     const lastActivityAtRef = useRef(0)
+    const requestReconnectRef = useRef<((reason: string) => void) | null>(null)
     const [reconnectNonce, setReconnectNonce] = useState(0)
     const [subscriptionId, setSubscriptionId] = useState<string | null>(null)
+    const reconnect = useCallback((reason: string = 'manual') => {
+        requestReconnectRef.current?.(reason)
+    }, [])
 
     useEffect(() => {
         onEventRef.current = options.onEvent
@@ -252,6 +256,7 @@ export function useSSE(options: {
                 reconnectTimerRef.current = null
             }
             reconnectAttemptRef.current = 0
+            requestReconnectRef.current = null
             setSubscriptionId(null)
             return
         }
@@ -302,6 +307,7 @@ export function useSSE(options: {
             setSubscriptionId(null)
             scheduleReconnect()
         }
+        requestReconnectRef.current = requestReconnect
 
         const flushInvalidations = () => {
             const pending = pendingInvalidationsRef.current
@@ -639,6 +645,9 @@ export function useSSE(options: {
                 clearTimeout(reconnectTimerRef.current)
                 reconnectTimerRef.current = null
             }
+            if (requestReconnectRef.current === requestReconnect) {
+                requestReconnectRef.current = null
+            }
             eventSource.close()
             if (eventSourceRef.current === eventSource) {
                 eventSourceRef.current = null
@@ -647,5 +656,5 @@ export function useSSE(options: {
         }
     }, [options.baseUrl, options.enabled, options.token, subscriptionKey, queryClient, reconnectNonce])
 
-    return { subscriptionId }
+    return { subscriptionId, reconnect }
 }

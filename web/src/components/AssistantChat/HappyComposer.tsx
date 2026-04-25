@@ -45,6 +45,16 @@ function formatCollaborationModeLabel(mode: string): string {
         ?? `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`
 }
 
+function supportsComposerModelChange(
+    agentFlavor: string | null | undefined,
+    capabilities?: import('@hapi/protocol').SessionCapabilities
+): boolean {
+    if (supportsModelChange(agentFlavor)) {
+        return true
+    }
+    return agentFlavor === 'codex' && Boolean(capabilities?.models?.length)
+}
+
 export function HappyComposer(props: {
     sessionId?: string
     disabled?: boolean
@@ -401,7 +411,7 @@ export function HappyComposer(props: {
 
     useEffect(() => {
         const handleGlobalKeyDown = (e: globalThis.KeyboardEvent) => {
-            if (e.key === 'm' && (e.metaKey || e.ctrlKey) && onModelChange && supportsModelChange(agentFlavor)) {
+            if (e.key === 'm' && (e.metaKey || e.ctrlKey) && onModelChange && supportsComposerModelChange(agentFlavor, capabilities)) {
                 e.preventDefault()
                 onModelChange(getNextModelForFlavor(agentFlavor, model, capabilities))
                 haptic('light')
@@ -495,7 +505,7 @@ export function HappyComposer(props: {
 
     const showCollaborationSettings = Boolean(onCollaborationModeChange && collaborationModeOptions.length > 0)
     const showPermissionSettings = Boolean(onPermissionModeChange && permissionModeOptions.length > 0)
-    const showModelSettings = Boolean(onModelChange && supportsModelChange(agentFlavor))
+    const showModelSettings = Boolean(onModelChange && supportsComposerModelChange(agentFlavor, capabilities))
     const showModelReasoningEffortSettings = Boolean(onModelReasoningEffortChange && codexReasoningEffortOptions.length > 0)
     const showEffortSettings = Boolean(onEffortChange && supportsEffort(agentFlavor))
     const showSettingsButton = Boolean(

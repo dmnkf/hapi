@@ -13,8 +13,14 @@ import { bootstrapSession } from '@/agent/sessionFactory';
 import { setControlledByUser } from '@/agent/runnerLifecycle';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { getInvokedCwd } from '@/utils/invokedCwd';
+import { codexAcpModeForPermissionMode } from '@/codex/utils/codexAcpMode';
 import { PermissionModeSchema } from '@hapi/protocol/schemas';
 import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
+
+type ConfigurableBackend = AgentBackend & {
+    setSessionConfigOption?: (sessionId: string, configId: string, value: string) => Promise<unknown>;
+    getConfigOptionId?: (kind: 'mode' | 'model' | 'reasoning') => string | null;
+};
 
 function emitReadyIfIdle(props: {
     queueSize: () => number;
@@ -87,6 +93,34 @@ export async function runAgentSession(opts: {
         mcpServers
     });
 
+    const applyRuntimeConfig = async () => {
+        if (opts.agentType !== 'codex') {
+            return;
+        }
+        const configurableBackend = backend as ConfigurableBackend;
+        if (!configurableBackend.setSessionConfigOption) {
+            return;
+        }
+        const acpMode = codexAcpModeForPermissionMode(currentPermissionMode);
+        if (!acpMode) {
+            return;
+        }
+        const modeConfigId = configurableBackend.getConfigOptionId?.('mode');
+        if (!modeConfigId) {
+            logger.debug('[ACP] Codex ACP mode config option not advertised; skipping permission mode sync');
+            return;
+        }
+        try {
+            await configurableBackend.setSessionConfigOption(
+                agentSessionId,
+                modeConfigId,
+                acpMode
+            );
+        } catch (error) {
+            logger.debug('[ACP] Failed to apply Codex ACP permission mode', error);
+        }
+    };
+
     let thinking = false;
     let shouldExit = false;
     let waitAbortController: AbortController | null = null;
@@ -115,10 +149,12 @@ export async function runAgentSession(opts: {
             currentPermissionMode = resolvePermissionMode(config.permissionMode);
         }
 
+        await applyRuntimeConfig();
         syncKeepAlive();
         return { applied: { permissionMode: currentPermissionMode } };
     });
 
+    await applyRuntimeConfig();
     syncKeepAlive();
     const keepAliveInterval = setInterval(() => {
         syncKeepAlive();

@@ -195,6 +195,93 @@ describe('sessions routes', () => {
         ])
     })
 
+    it('rejects model changes for Codex sessions without runtime model capabilities', async () => {
+        const { app, applySessionConfigCalls } = createApp(createSession())
+
+        const response = await app.request('/api/sessions/session-1/model', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ model: 'gpt-runtime-fast' })
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Model selection requires runtime model capabilities for Codex sessions'
+        })
+        expect(applySessionConfigCalls).toEqual([])
+    })
+
+    it('rejects model changes for local Codex sessions', async () => {
+        const session = createSession({
+            capabilities: {
+                models: [{ id: 'gpt-runtime-fast' }],
+                source: 'dynamic'
+            },
+            agentState: {
+                controlledByUser: true,
+                requests: {},
+                completedRequests: {}
+            }
+        })
+        const { app, applySessionConfigCalls } = createApp(session)
+
+        const response = await app.request('/api/sessions/session-1/model', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ model: 'gpt-runtime-fast' })
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Model selection can only be changed for remote Codex sessions'
+        })
+        expect(applySessionConfigCalls).toEqual([])
+    })
+
+    it('applies model changes for remote Codex sessions with runtime model capabilities', async () => {
+        const session = createSession({
+            capabilities: {
+                models: [{ id: 'gpt-runtime-fast' }],
+                source: 'dynamic'
+            }
+        })
+        const { app, applySessionConfigCalls } = createApp(session)
+
+        const response = await app.request('/api/sessions/session-1/model', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ model: 'gpt-runtime-fast' })
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ ok: true })
+        expect(applySessionConfigCalls).toEqual([
+            ['session-1', { model: 'gpt-runtime-fast' }]
+        ])
+    })
+
+    it('rejects Codex model changes that are not advertised by runtime capabilities', async () => {
+        const session = createSession({
+            capabilities: {
+                models: [{ id: 'gpt-runtime-fast' }],
+                source: 'dynamic'
+            }
+        })
+        const { app, applySessionConfigCalls } = createApp(session)
+
+        const response = await app.request('/api/sessions/session-1/model', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ model: 'stale-static-model' })
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Model is not advertised by the Codex runtime'
+        })
+        expect(applySessionConfigCalls).toEqual([])
+    })
+
     it('rejects effort changes for non-Claude sessions', async () => {
         const { app, applySessionConfigCalls } = createApp(createSession())
 

@@ -10,7 +10,13 @@ import { AsyncLock } from '@/utils/lock'
 import type { RawJSONLines } from '@/claude/types'
 import { configuration } from '@/configuration'
 import { AGENT_MESSAGE_PAYLOAD_TYPE } from "@hapi/protocol"
-import type { ClientToServerEvents, ServerToClientEvents, Update } from '@hapi/protocol'
+import type {
+    ClientToServerEvents,
+    ServerToClientEvents,
+    SessionCapabilities,
+    SessionRuntimeSlashCommands,
+    Update
+} from '@hapi/protocol'
 import {
     TerminalClosePayloadSchema,
     TerminalOpenPayloadSchema,
@@ -46,6 +52,9 @@ const SYSTEM_INJECTION_PREFIXES = [
     '<local-command-caveat>',
     '<system-reminder>',
 ]
+
+type SessionAlivePayload = Parameters<ClientToServerEvents['session-alive']>[0]
+type LastSessionAlivePayload = Omit<SessionAlivePayload, 'sid' | 'time'>
 
 /**
  * Returns true if a JSONL message should be classified as a user-role message
@@ -84,6 +93,9 @@ export class ApiSessionClient extends EventEmitter {
     private backfillInFlight: Promise<void> | null = null
     private needsBackfill = false
     private hasConnectedOnce = false
+    private lastSessionAlivePayload: LastSessionAlivePayload = { thinking: false }
+    private lastSessionCapabilities: SessionCapabilities | null = null
+    private lastSessionSlashCommands: SessionRuntimeSlashCommands | null = null
     readonly rpcHandlerManager: RpcHandlerManager
     private readonly terminalManager: TerminalManager
     private terminalCloseTimer: ReturnType<typeof setTimeout> | null = null
@@ -146,11 +158,7 @@ export class ApiSessionClient extends EventEmitter {
             }
             void this.backfillIfNeeded()
             this.hasConnectedOnce = true
-            this.socket.emit('session-alive', {
-                sid: this.sessionId,
-                time: Date.now(),
-                thinking: false
-            })
+            this.emitLastKnownSessionState()
         })
 
         this.socket.on('rpc-request', async (data: { method: string; params: string }, callback: (response: string) => void) => {
@@ -378,6 +386,28 @@ export class ApiSessionClient extends EventEmitter {
         await this.backfillInFlight
     }
 
+    private emitLastKnownSessionState(): void {
+        this.socket.emit('session-alive', {
+            sid: this.sessionId,
+            time: Date.now(),
+            ...this.lastSessionAlivePayload
+        })
+
+        if (this.lastSessionCapabilities) {
+            this.socket.emit('session-capabilities', {
+                sid: this.sessionId,
+                capabilities: this.lastSessionCapabilities
+            })
+        }
+
+        if (this.lastSessionSlashCommands) {
+            this.socket.emit('session-slash-commands', {
+                sid: this.sessionId,
+                slashCommands: this.lastSessionSlashCommands
+            })
+        }
+    }
+
     sendClaudeSessionMessage(body: RawJSONLines): void {
         let content: MessageContent
 
@@ -499,12 +529,15 @@ export class ApiSessionClient extends EventEmitter {
             collaborationMode?: SessionCollaborationMode
         }
     ): void {
-        this.socket.volatile.emit('session-alive', {
-            sid: this.sessionId,
-            time: Date.now(),
+        this.lastSessionAlivePayload = {
             thinking,
             mode,
             ...(runtime ?? {})
+        }
+        this.socket.volatile.emit('session-alive', {
+            sid: this.sessionId,
+            time: Date.now(),
+            ...this.lastSessionAlivePayload
         })
     }
 
@@ -513,11 +546,13 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.emit('messages-consumed', { sid: this.sessionId, localIds })
     }
 
-    emitSessionCapabilities(capabilities: import('@hapi/protocol').SessionCapabilities): void {
+    emitSessionCapabilities(capabilities: SessionCapabilities): void {
+        this.lastSessionCapabilities = capabilities
         this.socket.emit('session-capabilities', { sid: this.sessionId, capabilities })
     }
 
-    emitSessionSlashCommands(slashCommands: import('@hapi/protocol').SessionRuntimeSlashCommands): void {
+    emitSessionSlashCommands(slashCommands: SessionRuntimeSlashCommands): void {
+        this.lastSessionSlashCommands = slashCommands
         this.socket.emit('session-slash-commands', { sid: this.sessionId, slashCommands })
     }
 

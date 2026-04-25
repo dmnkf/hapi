@@ -270,6 +270,7 @@ export default {
   'reconnecting.reason.closed': '\u6d41\u8fde\u63a5\u5df2\u5173\u95ed',
   'reconnecting.reason.heartbeatTimeout': '\u5fc3\u8df3\u8d85\u65f6',
   'reconnecting.reason.visibilityRecovery': '\u540e\u53f0\u6062\u590d\u4e2d',
+  'reconnecting.reason.subscriptionMissing': '\u6d41\u8fde\u63a5\u5df2\u8fc7\u671f',
 
   // Send blocked
   'send.blocked.title': '\u65e0\u6cd5\u53d1\u9001\u6d88\u606f',

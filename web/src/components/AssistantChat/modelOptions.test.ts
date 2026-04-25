@@ -41,6 +41,24 @@ describe('getModelOptionsForFlavor', () => {
             { value: 'runtime-deep', label: 'Runtime Deep' }
         ])
     })
+
+    it('uses runtime Codex model capabilities without a synthetic auto option', () => {
+        const options = getModelOptionsForFlavor('codex', null, {
+            models: [
+                { id: 'gpt-runtime-fast', label: 'Runtime Fast' },
+                { id: 'gpt-runtime-deep', label: 'Runtime Deep' }
+            ],
+            source: 'dynamic'
+        })
+        expect(options).toEqual([
+            { value: 'gpt-runtime-fast', label: 'Runtime Fast' },
+            { value: 'gpt-runtime-deep', label: 'Runtime Deep' }
+        ])
+    })
+
+    it('does not return static Codex model options when runtime capabilities are absent', () => {
+        expect(getModelOptionsForFlavor('codex')).toEqual([])
+    })
 })
 
 describe('getNextModelForFlavor', () => {
@@ -52,5 +70,16 @@ describe('getNextModelForFlavor', () => {
     it('cycles Claude models', () => {
         const next = getNextModelForFlavor('claude', null)
         expect(next).not.toBeNull()
+    })
+
+    it('cycles runtime Codex models', () => {
+        const next = getNextModelForFlavor('codex', null, {
+            models: [
+                { id: 'gpt-runtime-fast' },
+                { id: 'gpt-runtime-deep' }
+            ],
+            source: 'dynamic'
+        })
+        expect(next).toBe('gpt-runtime-fast')
     })
 })

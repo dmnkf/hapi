@@ -16,6 +16,8 @@ import { AppServerEventConverter } from './utils/appServerEventConverter';
 import { registerAppServerPermissionHandlers } from './utils/appServerPermissionAdapter';
 import { buildThreadStartParams, buildTurnStartParams } from './utils/appServerConfig';
 import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
+import { codexAcpRemoteLauncher } from './codexAcpRemoteLauncher';
+import { describeCodexAcpSource, resolveCodexRemoteBackend } from './utils/codexBackendSelection';
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
@@ -775,6 +777,12 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 }
 
 export async function codexRemoteLauncher(session: CodexSession): Promise<'switch' | 'exit'> {
+    const backend = resolveCodexRemoteBackend();
+    if (backend === 'acp') {
+        logger.debug(`[codex-remote] Using ACP backend via ${describeCodexAcpSource()}`);
+        return codexAcpRemoteLauncher(session);
+    }
+
     const launcher = new CodexRemoteLauncher(session);
     return launcher.launch();
 }

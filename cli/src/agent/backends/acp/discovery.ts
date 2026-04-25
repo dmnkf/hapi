@@ -11,6 +11,14 @@ type SelectOption = {
     label?: string;
 };
 
+export type AcpConfigOptionKind = 'model' | 'reasoning' | 'mode';
+
+export type AcpConfigOptionIds = Partial<Record<AcpConfigOptionKind, string>>;
+
+export type AcpDiscoveryOptions = {
+    exposeModeConfigAsCollaborationModes?: boolean;
+};
+
 function normalizeName(value: string): string {
     return value.startsWith('/') ? value.slice(1) : value;
 }
@@ -82,7 +90,7 @@ function normalizeConfigOptions(value: unknown): Record<string, unknown>[] {
     return value.filter((entry): entry is Record<string, unknown> => isObject(entry));
 }
 
-function optionKind(option: Record<string, unknown>): 'model' | 'reasoning' | 'mode' | null {
+function optionKind(option: Record<string, unknown>): AcpConfigOptionKind | null {
     const category = lower(option.category);
     const id = lower(option.id);
     const name = lower(option.name);
@@ -199,7 +207,8 @@ function collaborationModesFromSessionModes(value: unknown): string[] {
 
 export function capabilitiesFromAcpSessionData(
     data: unknown,
-    previous?: SessionCapabilities | null
+    previous?: SessionCapabilities | null,
+    discoveryOptions?: AcpDiscoveryOptions
 ): SessionCapabilities | null {
     if (!isObject(data)) {
         return null;
@@ -233,7 +242,7 @@ export function capabilitiesFromAcpSessionData(
             next.reasoningEfforts = efforts;
             next.effortOptions = efforts;
             changed = true;
-        } else if (kind === 'mode') {
+        } else if (kind === 'mode' && discoveryOptions?.exposeModeConfigAsCollaborationModes !== false) {
             next.collaborationModes = uniqueStrings(options.map((entry) => entry.value));
             changed = true;
         }
@@ -250,7 +259,7 @@ export function capabilitiesFromAcpSessionData(
         }
     }
 
-    if (!next.collaborationModes) {
+    if (!next.collaborationModes && discoveryOptions?.exposeModeConfigAsCollaborationModes !== false) {
         const modes = collaborationModesFromSessionModes(data.modes);
         if (modes.length > 0) {
             next.collaborationModes = modes;
@@ -263,7 +272,8 @@ export function capabilitiesFromAcpSessionData(
 
 export function capabilitiesFromAcpUpdate(
     update: unknown,
-    previous?: SessionCapabilities | null
+    previous?: SessionCapabilities | null,
+    discoveryOptions?: AcpDiscoveryOptions
 ): SessionCapabilities | null {
     if (!isObject(update)) {
         return null;
@@ -271,10 +281,13 @@ export function capabilitiesFromAcpUpdate(
 
     const updateType = asString(update.sessionUpdate);
     if (updateType === 'config_option_update') {
-        return capabilitiesFromAcpSessionData(update, previous);
+        return capabilitiesFromAcpSessionData(update, previous, discoveryOptions);
     }
 
     if (updateType !== 'current_mode_update') {
+        return null;
+    }
+    if (discoveryOptions?.exposeModeConfigAsCollaborationModes === false) {
         return null;
     }
 
@@ -289,6 +302,24 @@ export function capabilitiesFromAcpUpdate(
         source: 'dynamic',
         probedAt: Date.now()
     };
+}
+
+export function configOptionIdsFromAcpSessionData(data: unknown): AcpConfigOptionIds {
+    if (!isObject(data)) {
+        return {};
+    }
+
+    const configOptions = normalizeConfigOptions(data.configOptions);
+    const ids: AcpConfigOptionIds = {};
+    for (const option of configOptions) {
+        const kind = optionKind(option);
+        const id = firstString(option.id, option.configId);
+        if (!kind || !id || ids[kind]) {
+            continue;
+        }
+        ids[kind] = id;
+    }
+    return ids;
 }
 
 export function slashCommandsFromAcpUpdate(update: unknown): SessionRuntimeSlashCommands | null {
