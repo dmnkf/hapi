@@ -20,13 +20,16 @@ export type GeminiModelPreset = keyof typeof GEMINI_MODEL_LABELS
 export const GEMINI_MODEL_PRESETS = Object.keys(GEMINI_MODEL_LABELS) as GeminiModelPreset[]
 export const DEFAULT_GEMINI_MODEL: GeminiModelPreset = 'gemini-2.5-pro'
 
-// Static fallback list for Codex models. The authoritative list is the codex
-// app-server's `model/list` RPC which the CLI exposes as SessionCapabilities;
-// web prefers that when available and falls back here otherwise.
+// Static fallback list for Codex models. The authoritative list should come from
+// the running Codex runtime (ACP config options / model state) exposed as
+// SessionCapabilities; web prefers that when available and falls back here
+// before a session exists.
 export const CODEX_MODEL_LABELS = {
+    'gpt-5.5': 'GPT-5.5',
     'gpt-5.4': 'GPT-5.4',
     'gpt-5.4-mini': 'GPT-5.4 Mini',
     'gpt-5.3-codex': 'GPT-5.3 Codex',
+    'gpt-5.3-codex-spark': 'GPT-5.3 Codex Spark',
     'gpt-5.2-codex': 'GPT-5.2 Codex',
     'gpt-5.2': 'GPT-5.2',
     'gpt-5.1-codex-max': 'GPT-5.1 Codex Max',

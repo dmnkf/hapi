@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import {
     CLAUDE_MODEL_PRESETS,
     CLAUDE_MODEL_LABELS,
+    CODEX_MODEL_LABELS,
+    CODEX_MODEL_PRESETS,
     DEFAULT_GEMINI_MODEL,
     GEMINI_MODEL_LABELS,
     GEMINI_MODEL_PRESETS,
@@ -57,6 +59,17 @@ describe('model constants consistency', () => {
     test('every GEMINI_MODEL_PRESET has a label', () => {
         for (const preset of GEMINI_MODEL_PRESETS) {
             expect(GEMINI_MODEL_LABELS[preset]).toBeDefined()
+        }
+    })
+
+    test('Codex presets include current runtime picker models', () => {
+        expect(CODEX_MODEL_PRESETS).toContain('gpt-5.5')
+        expect(CODEX_MODEL_PRESETS).toContain('gpt-5.3-codex-spark')
+    })
+
+    test('every CODEX_MODEL_PRESET has a label', () => {
+        for (const preset of CODEX_MODEL_PRESETS) {
+            expect(CODEX_MODEL_LABELS[preset]).toBeDefined()
         }
     })
 
