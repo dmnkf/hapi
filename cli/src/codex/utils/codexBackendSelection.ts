@@ -25,12 +25,12 @@ function commandExists(command: string, pathValue: string | undefined): boolean 
 }
 
 export function resolveCodexRemoteBackend(env: NodeJS.ProcessEnv = process.env): CodexRemoteBackend {
-    const raw = (env.HAPI_CODEX_BACKEND ?? 'app-server').trim().toLowerCase();
-    if (raw === '' || raw === 'app-server' || raw === 'appserver') {
-        return 'app-server';
-    }
-    if (raw === 'acp' || raw === 'codex-acp') {
+    const raw = (env.HAPI_CODEX_BACKEND ?? 'acp').trim().toLowerCase();
+    if (raw === '' || raw === 'acp' || raw === 'codex-acp') {
         return 'acp';
+    }
+    if (raw === 'app-server' || raw === 'appserver') {
+        return 'app-server';
     }
     if (raw === 'auto') {
         if (env.HAPI_CODEX_ACP_COMMAND) {

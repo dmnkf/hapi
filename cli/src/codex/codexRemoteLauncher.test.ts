@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import type { EnhancedMode } from './loop';
 
@@ -164,7 +164,18 @@ function createSessionStub() {
 }
 
 describe('codexRemoteLauncher', () => {
+    const originalCodexBackend = process.env.HAPI_CODEX_BACKEND;
+
+    beforeEach(() => {
+        process.env.HAPI_CODEX_BACKEND = 'app-server';
+    });
+
     afterEach(() => {
+        if (originalCodexBackend === undefined) {
+            delete process.env.HAPI_CODEX_BACKEND;
+        } else {
+            process.env.HAPI_CODEX_BACKEND = originalCodexBackend;
+        }
         harness.notifications = [];
         harness.registerRequestCalls = [];
         harness.initializeCalls = [];
