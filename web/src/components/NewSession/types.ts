@@ -22,11 +22,11 @@ const CLAUDE_DISPLAY_ORDER = ['opus', 'opus[1m]', 'sonnet', 'sonnet[1m]'] as con
 
 export const MODEL_OPTIONS: Record<AgentType, { value: string; label: string }[]> = {
     claude: [
-        { value: 'auto', label: 'Auto' },
+        { value: 'auto', label: 'Default' },
         ...CLAUDE_DISPLAY_ORDER.map(m => ({ value: m, label: CLAUDE_MODEL_LABELS[m] })),
     ],
     codex: [
-        { value: 'auto', label: 'Auto' },
+        { value: 'auto', label: 'Default' },
         ...CODEX_MODEL_PRESETS.map(m => ({ value: m, label: CODEX_MODEL_LABELS[m] })),
     ],
     cursor: [],

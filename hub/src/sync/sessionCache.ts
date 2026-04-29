@@ -7,12 +7,15 @@ import { EventPublisher } from './eventPublisher'
 import { extractTodoWriteTodosFromMessageContent, TodosSchema } from './todos'
 import { extractBackgroundTaskDelta } from './backgroundTasks'
 
+const QUEUED_MESSAGE_THINKING_GRACE_MS = 15_000
+
 export class SessionCache {
     private readonly sessions: Map<string, Session> = new Map()
     private readonly lastBroadcastAtBySessionId: Map<string, number> = new Map()
     private readonly todoBackfillAttemptedSessionIds: Set<string> = new Set()
     private readonly deduplicateInProgress: Set<string> = new Set()
     private readonly deduplicatePending: Set<string> = new Set()
+    private readonly pendingThinkingUntilBySessionId: Map<string, number> = new Map()
 
     constructor(
         private readonly store: Store,
@@ -76,6 +79,7 @@ export class SessionCache {
         let stored = this.store.sessions.getSession(sessionId)
         if (!stored) {
             const existed = this.sessions.delete(sessionId)
+            this.pendingThinkingUntilBySessionId.delete(sessionId)
             if (existed) {
                 this.publisher.emit({ type: 'session-removed', sessionId })
             }
@@ -184,11 +188,18 @@ export class SessionCache {
         const previousModelReasoningEffort = session.modelReasoningEffort
         const previousEffort = session.effort
         const previousCollaborationMode = session.collaborationMode
+        const pendingThinkingUntil = this.pendingThinkingUntilBySessionId.get(session.id) ?? 0
+        const requestedThinking = Boolean(payload.thinking)
+        const hubNow = Date.now()
+        const preserveQueuedThinking = !requestedThinking && pendingThinkingUntil > hubNow
 
         session.active = true
         session.activeAt = Math.max(session.activeAt, t)
-        session.thinking = Boolean(payload.thinking)
+        session.thinking = requestedThinking || preserveQueuedThinking
         session.thinkingAt = t
+        if (requestedThinking || pendingThinkingUntil <= hubNow) {
+            this.pendingThinkingUntilBySessionId.delete(session.id)
+        }
         if (payload.permissionMode !== undefined) {
             session.permissionMode = payload.permissionMode
         }
@@ -251,6 +262,33 @@ export class SessionCache {
         }
     }
 
+    markMessageQueued(sessionId: string, time: number = Date.now()): void {
+        const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
+        if (!session) return
+        if (!session.active) return
+
+        const nextTime = clampAliveTime(time) ?? Date.now()
+        const wasThinking = session.thinking
+        const previousUpdatedAt = session.updatedAt
+
+        session.thinking = true
+        session.thinkingAt = nextTime
+        session.updatedAt = Math.max(session.updatedAt, nextTime)
+        this.pendingThinkingUntilBySessionId.set(session.id, nextTime + QUEUED_MESSAGE_THINKING_GRACE_MS)
+
+        if (!wasThinking || session.updatedAt !== previousUpdatedAt) {
+            this.lastBroadcastAtBySessionId.set(session.id, Date.now())
+            this.publisher.emit({
+                type: 'session-updated',
+                sessionId: session.id,
+                data: {
+                    thinking: true,
+                    updatedAt: session.updatedAt
+                }
+            })
+        }
+    }
+
     applyBackgroundTaskDelta(sessionId: string, delta: { started: number; completed: number }): void {
         const session = this.sessions.get(sessionId)
         if (!session) return
@@ -289,6 +327,40 @@ export class SessionCache {
         })
     }
 
+    recordSessionActivity(sessionId: string, updatedAt: number): void {
+        if (!Number.isFinite(updatedAt)) {
+            return
+        }
+
+        const stored = this.store.sessions.getSession(sessionId)
+        if (!stored) {
+            return
+        }
+
+        const nextUpdatedAt = Math.max(stored.updatedAt, updatedAt)
+        const touched = this.store.sessions.touchSessionUpdatedAt(sessionId, nextUpdatedAt, stored.namespace)
+        const session = this.sessions.get(sessionId)
+
+        if (!session) {
+            if (touched) {
+                this.refreshSession(sessionId)
+            }
+            return
+        }
+
+        if (nextUpdatedAt <= session.updatedAt && !touched) {
+            return
+        }
+
+        session.updatedAt = Math.max(session.updatedAt, nextUpdatedAt)
+        this.publisher.emit({
+            type: 'session-updated',
+            sessionId,
+            namespace: session.namespace,
+            data: { updatedAt: session.updatedAt }
+        })
+    }
+
     handleSessionEnd(payload: { sid: string; time: number }): void {
         const t = clampAliveTime(payload.time) ?? Date.now()
 
@@ -303,6 +375,7 @@ export class SessionCache {
         session.thinking = false
         session.thinkingAt = t
         session.backgroundTaskCount = 0
+        this.pendingThinkingUntilBySessionId.delete(session.id)
 
         this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false, thinking: false, backgroundTaskCount: 0 } })
     }
@@ -316,6 +389,7 @@ export class SessionCache {
             if (now - session.activeAt <= sessionTimeoutMs) continue
             session.active = false
             session.thinking = false
+            this.pendingThinkingUntilBySessionId.delete(session.id)
             expired.push(session.id)
             this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false } })
         }
@@ -462,6 +536,7 @@ export class SessionCache {
         this.sessions.delete(sessionId)
         this.lastBroadcastAtBySessionId.delete(sessionId)
         this.todoBackfillAttemptedSessionIds.delete(sessionId)
+        this.pendingThinkingUntilBySessionId.delete(sessionId)
 
         this.publisher.emit({ type: 'session-removed', sessionId, namespace: session.namespace })
     }

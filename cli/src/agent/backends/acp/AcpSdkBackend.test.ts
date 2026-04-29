@@ -411,9 +411,9 @@ describe('AcpSdkBackend', () => {
         });
 
         expect(messages.map((message) => message.type)).toEqual([
+            'text',
             'tool_call',
             'tool_result',
-            'text',
             'turn_complete'
         ]);
     });

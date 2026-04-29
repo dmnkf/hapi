@@ -16,6 +16,7 @@ import { getInvokedCwd } from '@/utils/invokedCwd';
 import { codexAcpModeForPermissionMode } from '@/codex/utils/codexAcpMode';
 import { PermissionModeSchema } from '@hapi/protocol/schemas';
 import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
+import type { SessionEndReason } from '@hapi/protocol';
 
 type ConfigurableBackend = AgentBackend & {
     setSessionConfigOption?: (sessionId: string, configId: string, value: string) => Promise<unknown>;
@@ -191,6 +192,7 @@ export async function runAgentSession(opts: {
 
     registerKillSessionHandler(session.rpcHandlerManager, handleKillSession);
 
+    let sessionEndReason: SessionEndReason = 'completed';
     try {
         while (!shouldExit) {
             waitAbortController = new AbortController();
@@ -236,10 +238,16 @@ export async function runAgentSession(opts: {
                 });
             }
         }
+        if (shouldExit) {
+            sessionEndReason = 'terminated';
+        }
+    } catch (error) {
+        sessionEndReason = 'error';
+        throw error;
     } finally {
         clearInterval(keepAliveInterval);
         await permissionAdapter.cancelAll('Session ended');
-        session.sendSessionDeath();
+        session.sendSessionDeath(sessionEndReason);
         await session.flush();
         session.close();
         await backend.disconnect();

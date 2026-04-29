@@ -2,37 +2,55 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
 
-// jsdom's localStorage is broken in some Bun/Node versions (missing clear,
-// getItem, etc.).  Provide a full in-memory implementation so every test
-// that touches localStorage works reliably.
-const storageMock = (() => {
-    let store: Record<string, string> = {}
-    return {
-        getItem: (key: string) => (key in store ? store[key] : null),
-        setItem: (key: string, value: string) => {
-            store[key] = String(value)
-        },
-        removeItem: (key: string) => {
-            delete store[key]
-        },
-        clear: () => {
-            store = {}
-        },
+function installMemoryLocalStorage(): void {
+    const store = new Map<string, string>()
+    const memoryLocalStorage: Storage = {
         get length() {
-            return Object.keys(store).length
+            return store.size
         },
-        key: (index: number) => Object.keys(store)[index] ?? null,
+        clear() {
+            store.clear()
+        },
+        getItem(key: string) {
+            return store.get(key) ?? null
+        },
+        key(index: number) {
+            return Array.from(store.keys())[index] ?? null
+        },
+        removeItem(key: string) {
+            store.delete(key)
+        },
+        setItem(key: string, value: string) {
+            store.set(key, String(value))
+        }
     }
-})()
+
+    Object.defineProperty(globalThis, 'localStorage', {
+        value: memoryLocalStorage,
+        configurable: true
+    })
+    if (typeof window !== 'undefined') {
+        Object.defineProperty(window, 'localStorage', {
+            value: memoryLocalStorage,
+            configurable: true
+        })
+    }
+}
+
+try {
+    const storage = globalThis.localStorage
+    if (
+        typeof storage?.getItem !== 'function'
+        || typeof storage.setItem !== 'function'
+        || typeof storage.removeItem !== 'function'
+        || typeof storage.clear !== 'function'
+    ) {
+        installMemoryLocalStorage()
+    }
+} catch {
+    installMemoryLocalStorage()
+}
 
 afterEach(() => {
-    storageMock.clear()
-    if (typeof document !== 'undefined') {
-        cleanup()
-    }
+    cleanup()
 })
-
-Object.defineProperty(globalThis, 'localStorage', { value: storageMock, writable: true })
-if (typeof window !== 'undefined') {
-    Object.defineProperty(window, 'localStorage', { value: storageMock, writable: true })
-}

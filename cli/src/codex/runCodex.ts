@@ -71,21 +71,15 @@ export async function runCodex(opts: {
     lifecycle.registerProcessHandlers();
     registerKillSessionHandler(session.rpcHandlerManager, lifecycle.cleanupAndExit);
 
-    const syncSessionMode = () => {
+    const applyCurrentConfigToSession = (options?: { syncModel?: boolean }) => {
         const sessionInstance = sessionWrapperRef.current;
         if (!sessionInstance) {
             return;
         }
-        const sessionModel = sessionInstance.getModel();
-        if (sessionModel !== undefined) {
-            currentModel = sessionModel ?? undefined;
-        }
-        const sessionModelReasoningEffort = sessionInstance.getModelReasoningEffort();
-        if (sessionModelReasoningEffort !== undefined) {
-            currentModelReasoningEffort = (sessionModelReasoningEffort ?? undefined) as ReasoningEffort | undefined;
-        }
         sessionInstance.setPermissionMode(currentPermissionMode);
-        sessionInstance.setModel(currentModel ?? null);
+        if (options?.syncModel !== false) {
+            sessionInstance.setModel(currentModel ?? null);
+        }
         sessionInstance.setModelReasoningEffort(currentModelReasoningEffort ?? null);
         sessionInstance.setCollaborationMode(currentCollaborationMode);
         logger.debug(
@@ -192,7 +186,8 @@ export async function runCodex(opts: {
             currentPermissionMode = resolvePermissionMode(config.permissionMode);
         }
 
-        if (config.model !== undefined) {
+        const shouldSyncModel = config.model !== undefined;
+        if (shouldSyncModel) {
             currentModel = resolveModel(config.model);
         }
 
@@ -204,16 +199,26 @@ export async function runCodex(opts: {
             currentCollaborationMode = resolveCollaborationMode(config.collaborationMode);
         }
 
-        syncSessionMode();
+        applyCurrentConfigToSession({ syncModel: shouldSyncModel });
+        const applied: {
+            permissionMode: PermissionMode;
+            model?: string | null;
+            modelReasoningEffort: ReasoningEffort | null;
+            collaborationMode: EnhancedMode['collaborationMode'];
+        } = {
+            permissionMode: currentPermissionMode,
+            modelReasoningEffort: currentModelReasoningEffort ?? null,
+            collaborationMode: currentCollaborationMode
+        };
+        if (shouldSyncModel) {
+            applied.model = currentModel ?? null;
+        }
         return {
-            applied: {
-                permissionMode: currentPermissionMode,
-                model: currentModel ?? null,
-                modelReasoningEffort: currentModelReasoningEffort ?? null,
-                collaborationMode: currentCollaborationMode
-            }
+            applied
         };
     });
+
+    let crashed = false;
 
     try {
         await loop({
@@ -233,10 +238,11 @@ export async function runCodex(opts: {
             onModeChange: createModeChangeHandler(session),
             onSessionReady: (instance) => {
                 sessionWrapperRef.current = instance;
-                syncSessionMode();
+                applyCurrentConfigToSession();
             }
         });
     } catch (error) {
+        crashed = true;
         lifecycle.markCrash(error);
         logger.debug('[codex] Loop error:', error);
     } finally {
@@ -244,6 +250,9 @@ export async function runCodex(opts: {
         if (localFailure?.exitReason === 'exit') {
             lifecycle.setExitCode(1);
             lifecycle.setArchiveReason(`Local launch failed: ${formatFailureReason(localFailure.message)}`);
+            lifecycle.setSessionEndReason('error');
+        } else if (!crashed) {
+            lifecycle.setSessionEndReason('completed');
         }
         await lifecycle.cleanupAndExit();
     }

@@ -59,6 +59,14 @@ vi.mock('@/hooks/useRecentPaths', () => ({
     }),
 }))
 
+vi.mock('@/hooks/queries/useCodexModels', () => ({
+    useCodexModels: () => ({
+        models: [],
+        isLoading: false,
+        error: null,
+    }),
+}))
+
 function createMachine(overrides?: Partial<Machine>): Machine {
     return {
         id: 'machine-1',

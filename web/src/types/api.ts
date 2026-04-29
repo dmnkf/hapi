@@ -66,6 +66,7 @@ export type Machine = {
         platform: string
         happyCliVersion: string
         displayName?: string
+        workspaceRoot?: string
     } | null
     runnerState?: RunnerState | null
 }
@@ -95,6 +96,20 @@ export type MessagesResponse = {
 export type MachinesResponse = { machines: Machine[] }
 export type MachinePathsExistsResponse = { exists: Record<string, boolean> }
 export type MachineDirectoryResponse = ListDirectoryResponse
+
+export type MachineDirectoryEntry = {
+    name: string
+    type: 'file' | 'directory' | 'other'
+    size?: number
+    modified?: number
+    isGitRepo?: boolean
+}
+
+export type MachineListDirectoryResponse = {
+    success: boolean
+    entries?: MachineDirectoryEntry[]
+    error?: string
+}
 
 export type SpawnResponse =
     | { type: 'success'; sessionId: string }
@@ -193,6 +208,20 @@ export type SkillSummary = {
 export type SkillsResponse = {
     success: boolean
     skills?: SkillSummary[]
+    error?: string
+}
+
+export type CodexModelSummary = {
+    id: string
+    displayName: string
+    isDefault: boolean
+    defaultReasoningEffort?: string | null
+    supportedReasoningEfforts?: string[]
+}
+
+export type CodexModelsResponse = {
+    success: boolean
+    models?: CodexModelSummary[]
     error?: string
 }
 

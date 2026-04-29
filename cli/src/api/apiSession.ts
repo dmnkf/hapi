@@ -9,11 +9,12 @@ import { apiValidationError } from '@/utils/errorUtils'
 import { AsyncLock } from '@/utils/lock'
 import type { RawJSONLines } from '@/claude/types'
 import { configuration } from '@/configuration'
-import { AGENT_MESSAGE_PAYLOAD_TYPE } from "@hapi/protocol"
+import { AGENT_MESSAGE_PAYLOAD_TYPE } from '@hapi/protocol'
 import type {
     ClientToServerEvents,
     ServerToClientEvents,
     SessionCapabilities,
+    SessionEndReason,
     SessionRuntimeSlashCommands,
     Update
 } from '@hapi/protocol'
@@ -556,9 +557,9 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.emit('session-slash-commands', { sid: this.sessionId, slashCommands })
     }
 
-    sendSessionDeath(): void {
+    sendSessionDeath(reason?: SessionEndReason): void {
         void cleanupUploadDir(this.sessionId)
-        this.socket.emit('session-end', { sid: this.sessionId, time: Date.now() })
+        this.socket.emit('session-end', { sid: this.sessionId, time: Date.now(), reason })
     }
 
     updateMetadata(handler: (metadata: Metadata) => Metadata): void {

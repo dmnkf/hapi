@@ -42,6 +42,7 @@ export type SocketServerDeps = {
     onSessionSlashCommands?: (sessionId: string, slashCommands: import('@hapi/protocol').SessionRuntimeSlashCommands) => void
     onMachineAlive?: (payload: { machineId: string; time: number }) => void
     onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
+    onSessionActivity?: (sessionId: string, updatedAt: number) => void
 }
 
 export function createSocketServer(deps: SocketServerDeps): {
@@ -119,7 +120,8 @@ export function createSocketServer(deps: SocketServerDeps): {
         onSessionSlashCommands: deps.onSessionSlashCommands,
         onMachineAlive: deps.onMachineAlive,
         onWebappEvent: deps.onWebappEvent,
-        onBackgroundTaskDelta: deps.onBackgroundTaskDelta
+        onBackgroundTaskDelta: deps.onBackgroundTaskDelta,
+        onSessionActivity: deps.onSessionActivity
     }))
 
     terminalNs.use(async (socket, next) => {

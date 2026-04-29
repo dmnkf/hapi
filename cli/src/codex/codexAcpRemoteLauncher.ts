@@ -282,6 +282,9 @@ class CodexAcpRemoteLauncher extends RemoteLauncherBase {
             case 'plan':
                 this.messageBuffer.addMessage('Plan updated', 'status');
                 break;
+            case 'reasoning':
+                this.messageBuffer.addMessage(message.text, 'system');
+                break;
             case 'error':
                 this.messageBuffer.addMessage(message.message, 'status');
                 break;

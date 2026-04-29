@@ -12,7 +12,7 @@
 #
 # Examples:
 #   curl -fsSL .../install.sh | bash
-#   curl -fsSL .../install.sh | HAPI_VERSION=v0.17.0-dmnkf.1 bash
+#   curl -fsSL .../install.sh | HAPI_VERSION=v0.17.2-dmnkf.13 bash
 #   curl -fsSL .../install.sh | HAPI_SYSTEM=1 bash
 
 set -euo pipefail
