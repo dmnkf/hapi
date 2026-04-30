@@ -101,6 +101,11 @@ class CodexAcpRemoteLauncher extends RemoteLauncherBase {
                     sessionId: resumeSessionId,
                     cwd: session.path,
                     mcpServers: acpMcpServers
+                }, (message: AgentMessage) => {
+                    const converted = convertAgentMessage(message);
+                    if (converted) {
+                        session.sendAgentMessage(converted);
+                    }
                 });
             } catch (error) {
                 logger.warn('[codex-acp-remote] resume failed, starting new session', error);

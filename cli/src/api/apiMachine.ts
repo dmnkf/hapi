@@ -18,6 +18,7 @@ import { registerCommonHandlers } from '../modules/common/registerCommonHandlers
 import type { SpawnSessionOptions, SpawnSessionResult } from '../modules/common/rpcTypes'
 import { applyVersionedAck } from './versionedUpdate'
 import { buildSocketIoExtraHeaderOptions } from './hubExtraHeaders'
+import { importNativeCodexSession, listNativeCodexSessions } from '@/codex/utils/nativeCodexSessions'
 
 interface ServerToRunnerEvents {
     update: (data: Update) => void
@@ -205,6 +206,29 @@ export class ApiMachineClient {
             } catch (error) {
                 return { success: false, error: error instanceof Error ? error.message : 'Failed to list directory' }
             }
+        })
+
+        this.rpcHandlerManager.registerHandler('listNativeCodexSessions', async () => {
+            return {
+                success: true,
+                sessions: await listNativeCodexSessions()
+            }
+        })
+
+        this.rpcHandlerManager.registerHandler('importNativeCodexSession', async (params: any) => {
+            const { codexSessionId, transcriptPath } = params || {}
+            if (typeof codexSessionId !== 'string' && typeof transcriptPath !== 'string') {
+                return { success: false, error: 'codexSessionId or transcriptPath is required' }
+            }
+
+            const { ApiClient } = await import('./api')
+            const api = await ApiClient.create()
+            return await importNativeCodexSession({
+                api,
+                machine: this.machine,
+                codexSessionId: typeof codexSessionId === 'string' ? codexSessionId : undefined,
+                transcriptPath: typeof transcriptPath === 'string' ? transcriptPath : undefined
+            })
         })
     }
 

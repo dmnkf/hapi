@@ -30,6 +30,8 @@ export const MetadataSchema = z.object({
     machineId: z.string().optional(),
     claudeSessionId: z.string().optional(),
     codexSessionId: z.string().optional(),
+    codexTranscriptPath: z.string().optional(),
+    importedFromNativeCodex: z.boolean().optional(),
     geminiSessionId: z.string().optional(),
     opencodeSessionId: z.string().optional(),
     cursorSessionId: z.string().optional(),

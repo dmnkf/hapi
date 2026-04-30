@@ -11,6 +11,8 @@ import type {
     MachinePathsExistsResponse,
     MachinesResponse,
     MessagesResponse,
+    NativeCodexSessionsResponse,
+    ImportNativeCodexSessionResponse,
     CodexModelsResponse,
     PermissionMode,
     PushSubscriptionPayload,
@@ -432,6 +434,25 @@ export class ApiClient {
     async getMachineCodexModels(machineId: string): Promise<CodexModelsResponse> {
         return await this.request<CodexModelsResponse>(
             `/api/machines/${encodeURIComponent(machineId)}/codex-models`
+        )
+    }
+
+    async getNativeCodexSessions(machineId: string): Promise<NativeCodexSessionsResponse> {
+        return await this.request<NativeCodexSessionsResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/native-codex-sessions`
+        )
+    }
+
+    async importNativeCodexSession(
+        machineId: string,
+        options: { codexSessionId?: string; transcriptPath?: string }
+    ): Promise<ImportNativeCodexSessionResponse> {
+        return await this.request<ImportNativeCodexSessionResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/native-codex-sessions/import`,
+            {
+                method: 'POST',
+                body: JSON.stringify(options)
+            }
         )
     }
 

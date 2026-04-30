@@ -339,6 +339,46 @@ describe('AcpSdkBackend', () => {
         expect(capturedRequestId).toBe('tool-approve');
     });
 
+    it('captures ACP session/load replay updates before prompting', async () => {
+        backendStatics.UPDATE_QUIET_PERIOD_MS = 1;
+        backendStatics.UPDATE_DRAIN_TIMEOUT_MS = 50;
+
+        const backend = new AcpSdkBackend({ command: 'codex-acp' });
+        const backendInternal = backend as unknown as {
+            transport: {
+                sendRequest: (...args: unknown[]) => Promise<unknown>;
+            } | null;
+            handleSessionUpdate: (params: unknown) => void;
+        };
+        const messages: AgentMessage[] = [];
+
+        backendInternal.transport = {
+            sendRequest: async (method) => {
+                expect(method).toBe('session/load');
+                backendInternal.handleSessionUpdate({
+                    sessionId: 'session-1',
+                    update: {
+                        sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+                        content: { type: 'text', text: 'existing history' }
+                    }
+                });
+                return { sessionId: 'session-1' };
+            }
+        };
+
+        await backend.loadSession({
+            sessionId: 'session-1',
+            cwd: '/tmp',
+            mcpServers: []
+        }, (message) => {
+            messages.push(message);
+        });
+
+        expect(messages).toEqual([
+            { type: 'text', text: 'existing history' }
+        ]);
+    });
+
     it('emits turn_complete after trailing tool updates from the same turn', async () => {
         backendStatics.UPDATE_QUIET_PERIOD_MS = 8;
         backendStatics.UPDATE_DRAIN_TIMEOUT_MS = 200;

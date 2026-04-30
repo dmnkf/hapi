@@ -22,7 +22,9 @@ import {
     type RpcDeleteUploadResponse,
     type RpcListDirectoryResponse,
     type RpcListCodexModelsResponse,
+    type RpcListNativeCodexSessionsResponse,
     type RpcPathExistsResponse,
+    type RpcImportNativeCodexSessionResponse,
     type RpcReadFileResponse,
     type RpcUploadFileResponse
 } from './rpcGateway'
@@ -37,7 +39,9 @@ export type {
     RpcDeleteUploadResponse,
     RpcListDirectoryResponse,
     RpcListCodexModelsResponse,
+    RpcListNativeCodexSessionsResponse,
     RpcPathExistsResponse,
+    RpcImportNativeCodexSessionResponse,
     RpcReadFileResponse,
     RpcUploadFileResponse
 } from './rpcGateway'
@@ -168,6 +172,10 @@ export class SyncEngine {
 
     getMessagesAfter(sessionId: string, options: { afterSeq: number; limit: number }): DecryptedMessage[] {
         return this.messageService.getMessagesAfter(sessionId, options)
+    }
+
+    addRawMessage(sessionId: string, content: unknown, localId?: string | null): DecryptedMessage {
+        return this.messageService.addRawMessage(sessionId, content, localId)
     }
 
     handleRealtimeEvent(event: SyncEvent): void {
@@ -612,5 +620,16 @@ export class SyncEngine {
 
     async listCodexModelsForMachine(machineId: string): Promise<RpcListCodexModelsResponse> {
         return await this.rpcGateway.listCodexModelsForMachine(machineId)
+    }
+
+    async listNativeCodexSessions(machineId: string): Promise<RpcListNativeCodexSessionsResponse> {
+        return await this.rpcGateway.listNativeCodexSessions(machineId)
+    }
+
+    async importNativeCodexSession(
+        machineId: string,
+        params: { codexSessionId?: string; transcriptPath?: string }
+    ): Promise<RpcImportNativeCodexSessionResponse> {
+        return await this.rpcGateway.importNativeCodexSession(machineId, params)
     }
 }

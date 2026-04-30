@@ -64,6 +64,39 @@ export class MessageService {
         }))
     }
 
+    addRawMessage(sessionId: string, content: unknown, localId?: string | null): DecryptedMessage {
+        const msg = this.store.messages.addMessage(sessionId, content, localId ?? undefined)
+        this.onSessionActivity?.(sessionId, msg.createdAt)
+
+        const message = {
+            id: msg.id,
+            seq: msg.seq,
+            localId: msg.localId,
+            content: msg.content,
+            createdAt: msg.createdAt
+        }
+
+        const update = {
+            id: msg.id,
+            seq: msg.seq,
+            createdAt: msg.createdAt,
+            body: {
+                t: 'new-message' as const,
+                sid: sessionId,
+                message
+            }
+        }
+        this.io.of('/cli').to(`session:${sessionId}`).emit('update', update)
+
+        this.publisher.emit({
+            type: 'message-received',
+            sessionId,
+            message
+        })
+
+        return message
+    }
+
     async sendMessage(
         sessionId: string,
         payload: {

@@ -225,6 +225,38 @@ export type CodexModelsResponse = {
     error?: string
 }
 
+export type NativeCodexSessionSummary = {
+    codexSessionId: string
+    transcriptPath: string
+    cwd: string | null
+    title: string
+    updatedAt: number
+    messageCount: number
+    userMessageCount: number
+    agentMessageCount: number
+    model?: string
+}
+
+export type NativeCodexSessionsResponse = {
+    success: boolean
+    sessions?: NativeCodexSessionSummary[]
+    error?: string
+}
+
+export type ImportNativeCodexSessionResponse =
+    | {
+        success: true
+        sessionId: string
+        codexSessionId: string
+        transcriptPath: string
+        importedMessages: number
+        skippedMessages: number
+    }
+    | {
+        success: false
+        error: string
+    }
+
 export type PushSubscriptionKeys = {
     p256dh: string
     auth: string

@@ -56,4 +56,91 @@ describe('machines routes', () => {
             ]
         })
     })
+
+    it('returns native Codex sessions for an online machine', async () => {
+        const machine = createMachine()
+        const engine = {
+            getMachine: () => machine,
+            getMachineByNamespace: () => machine,
+            listNativeCodexSessions: async () => ({
+                success: true,
+                sessions: [
+                    {
+                        codexSessionId: 'codex-thread-1',
+                        transcriptPath: '/home/me/.codex/sessions/thread.jsonl',
+                        cwd: '/repo',
+                        title: 'Fix reconnect',
+                        updatedAt: 123,
+                        messageCount: 2,
+                        userMessageCount: 1,
+                        agentMessageCount: 1
+                    }
+                ]
+            })
+        } as Partial<SyncEngine>
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            await next()
+        })
+        app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
+
+        const response = await app.request('/api/machines/machine-1/native-codex-sessions')
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            success: true,
+            sessions: [
+                {
+                    codexSessionId: 'codex-thread-1',
+                    transcriptPath: '/home/me/.codex/sessions/thread.jsonl',
+                    cwd: '/repo',
+                    title: 'Fix reconnect',
+                    updatedAt: 123,
+                    messageCount: 2,
+                    userMessageCount: 1,
+                    agentMessageCount: 1
+                }
+            ]
+        })
+    })
+
+    it('imports a native Codex session for an online machine', async () => {
+        const machine = createMachine()
+        const engine = {
+            getMachine: () => machine,
+            getMachineByNamespace: () => machine,
+            importNativeCodexSession: async (_machineId: string, params: { codexSessionId?: string }) => ({
+                success: true,
+                sessionId: 'hapi-session-1',
+                codexSessionId: params.codexSessionId ?? 'codex-thread-1',
+                transcriptPath: '/home/me/.codex/sessions/thread.jsonl',
+                importedMessages: 2,
+                skippedMessages: 1
+            })
+        } as Partial<SyncEngine>
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            await next()
+        })
+        app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
+
+        const response = await app.request('/api/machines/machine-1/native-codex-sessions/import', {
+            method: 'POST',
+            body: JSON.stringify({ codexSessionId: 'codex-thread-1' })
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            success: true,
+            sessionId: 'hapi-session-1',
+            codexSessionId: 'codex-thread-1',
+            transcriptPath: '/home/me/.codex/sessions/thread.jsonl',
+            importedMessages: 2,
+            skippedMessages: 1
+        })
+    })
 })

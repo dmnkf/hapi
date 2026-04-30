@@ -58,6 +58,38 @@ export type RpcListCodexModelsResponse = {
     error?: string
 }
 
+export type RpcNativeCodexSession = {
+    codexSessionId: string
+    transcriptPath: string
+    cwd: string | null
+    title: string
+    updatedAt: number
+    messageCount: number
+    userMessageCount: number
+    agentMessageCount: number
+    model?: string
+}
+
+export type RpcListNativeCodexSessionsResponse = {
+    success: boolean
+    sessions?: RpcNativeCodexSession[]
+    error?: string
+}
+
+export type RpcImportNativeCodexSessionResponse =
+    | {
+        success: true
+        sessionId: string
+        codexSessionId: string
+        transcriptPath: string
+        importedMessages: number
+        skippedMessages: number
+    }
+    | {
+        success: false
+        error: string
+    }
+
 export class RpcGateway {
     constructor(
         private readonly io: Server,
@@ -260,6 +292,17 @@ export class RpcGateway {
 
     async listCodexModelsForMachine(machineId: string): Promise<RpcListCodexModelsResponse> {
         return await this.machineRpc(machineId, 'listCodexModels', {}) as RpcListCodexModelsResponse
+    }
+
+    async listNativeCodexSessions(machineId: string): Promise<RpcListNativeCodexSessionsResponse> {
+        return await this.machineRpc(machineId, 'listNativeCodexSessions', {}) as RpcListNativeCodexSessionsResponse
+    }
+
+    async importNativeCodexSession(
+        machineId: string,
+        params: { codexSessionId?: string; transcriptPath?: string }
+    ): Promise<RpcImportNativeCodexSessionResponse> {
+        return await this.machineRpc(machineId, 'importNativeCodexSession', params) as RpcImportNativeCodexSessionResponse
     }
 
     private async sessionRpc(sessionId: string, method: string, params: unknown): Promise<unknown> {

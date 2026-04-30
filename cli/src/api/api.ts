@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type { AgentState, CreateMachineResponse, CreateSessionResponse, RunnerState, Machine, MachineMetadata, Metadata, Session } from '@/api/types'
+import type { DecryptedMessage } from '@hapi/protocol/types'
 import { AgentStateSchema, CreateMachineResponseSchema, CreateSessionResponseSchema, RunnerStateSchema, MachineMetadataSchema, MetadataSchema } from '@/api/types'
 import { configuration } from '@/configuration'
 import { getAuthToken } from '@/api/auth'
@@ -82,6 +83,33 @@ export class ApiClient {
             permissionMode: raw.permissionMode,
             collaborationMode: raw.collaborationMode
         }
+    }
+
+    async importSessionMessage(opts: {
+        sessionId: string
+        content: unknown
+        localId?: string
+    }): Promise<DecryptedMessage> {
+        const response = await axios.post<{ message: DecryptedMessage }>(
+            `${configuration.apiUrl}/cli/sessions/${encodeURIComponent(opts.sessionId)}/messages`,
+            {
+                content: opts.content,
+                localId: opts.localId
+            },
+            {
+                headers: buildHubRequestHeaders({
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                }),
+                timeout: 60_000
+            }
+        )
+
+        if (!response.data || typeof response.data !== 'object' || !response.data.message) {
+            throw apiValidationError('Invalid /cli/sessions/:id/messages response', response)
+        }
+
+        return response.data.message
     }
 
     async getOrCreateMachine(opts: {

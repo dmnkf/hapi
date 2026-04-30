@@ -131,30 +131,50 @@ export class AcpSdkBackend implements AgentBackend {
         return sessionId;
     }
 
-    async loadSession(config: AgentSessionConfig & { sessionId: string }): Promise<string> {
+    async loadSession(config: AgentSessionConfig & { sessionId: string }, onReplay?: (msg: AgentMessage) => void): Promise<string> {
         if (!this.transport) {
             throw new Error('ACP transport not initialized');
         }
 
-        const response = await withRetry(
-            () => this.transport!.sendRequest('session/load', {
-                sessionId: config.sessionId,
-                cwd: config.cwd,
-                mcpServers: config.mcpServers
-            }),
-            {
-                ...AcpSdkBackend.INIT_RETRY_OPTIONS,
-                onRetry: (error, attempt, nextDelayMs) => {
-                    logger.debug(`[ACP] session/load attempt ${attempt} failed, retrying in ${nextDelayMs}ms`, error);
-                }
-            }
-        );
+        const previousHandler = this.messageHandler;
+        this.activeSessionId = config.sessionId;
+        if (onReplay) {
+            this.messageHandler = new AcpMessageHandler(onReplay);
+        }
 
-        const loadedSessionId = isObject(response) ? asString(response.sessionId) : null;
-        const sessionId = loadedSessionId ?? config.sessionId;
-        this.activeSessionId = sessionId;
-        this.publishSessionCapabilities(response);
-        return sessionId;
+        try {
+            const response = await withRetry(
+                () => this.transport!.sendRequest('session/load', {
+                    sessionId: config.sessionId,
+                    cwd: config.cwd,
+                    mcpServers: config.mcpServers
+                }),
+                {
+                    ...AcpSdkBackend.INIT_RETRY_OPTIONS,
+                    onRetry: (error, attempt, nextDelayMs) => {
+                        logger.debug(`[ACP] session/load attempt ${attempt} failed, retrying in ${nextDelayMs}ms`, error);
+                    }
+                }
+            );
+
+            await this.waitForSessionUpdateQuiet(
+                AcpSdkBackend.UPDATE_QUIET_PERIOD_MS,
+                AcpSdkBackend.UPDATE_DRAIN_TIMEOUT_MS
+            );
+            if (onReplay) {
+                this.messageHandler?.flushText();
+            }
+
+            const loadedSessionId = isObject(response) ? asString(response.sessionId) : null;
+            const sessionId = loadedSessionId ?? config.sessionId;
+            this.activeSessionId = sessionId;
+            this.publishSessionCapabilities(response);
+            return sessionId;
+        } finally {
+            if (onReplay) {
+                this.messageHandler = previousHandler;
+            }
+        }
     }
 
     async prompt(

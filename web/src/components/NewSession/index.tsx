@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ApiClient } from '@/api/client'
-import type { DirectoryEntry, Machine } from '@/types/api'
+import type { DirectoryEntry, Machine, NativeCodexSessionSummary } from '@/types/api'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useMachinePathsExists } from '@/hooks/useMachinePathsExists'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
@@ -145,6 +145,10 @@ export function NewSession(props: {
     const [directoryCreationConfirmed, setDirectoryCreationConfirmed] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [showAdvanced, setShowAdvanced] = useState(loadShowAdvanced)
+    const [nativeCodexSessions, setNativeCodexSessions] = useState<NativeCodexSessionSummary[] | null>(null)
+    const [nativeCodexLoading, setNativeCodexLoading] = useState(false)
+    const [nativeCodexImporting, setNativeCodexImporting] = useState<string | null>(null)
+    const [nativeCodexError, setNativeCodexError] = useState<string | null>(null)
     const worktreeInputRef = useRef<HTMLInputElement>(null)
     const machineDirectoryCacheRef = useRef(new Map<string, DirectoryEntry[]>())
 
@@ -262,7 +266,16 @@ export function NewSession(props: {
 
     useEffect(() => {
         machineDirectoryCacheRef.current.clear()
+        setNativeCodexSessions(null)
+        setNativeCodexError(null)
     }, [machineId])
+
+    useEffect(() => {
+        if (agent !== 'codex') {
+            setNativeCodexSessions(null)
+            setNativeCodexError(null)
+        }
+    }, [agent])
 
     const getSuggestions = useCallback(async (query: string): Promise<Suggestion[]> => {
         const lowered = query.toLowerCase()
@@ -468,6 +481,53 @@ export function NewSession(props: {
         }
     }
 
+    const handleLoadNativeCodexSessions = useCallback(async () => {
+        if (!machineId) return
+        setNativeCodexLoading(true)
+        setNativeCodexError(null)
+        try {
+            const result = await props.api.getNativeCodexSessions(machineId)
+            if (!result.success) {
+                setNativeCodexError(result.error ?? 'Failed to list Codex CLI sessions')
+                setNativeCodexSessions([])
+                return
+            }
+            setNativeCodexSessions(result.sessions ?? [])
+        } catch (error) {
+            setNativeCodexError(error instanceof Error ? error.message : 'Failed to list Codex CLI sessions')
+            setNativeCodexSessions([])
+        } finally {
+            setNativeCodexLoading(false)
+        }
+    }, [machineId, props.api])
+
+    const handleImportNativeCodexSession = useCallback(async (session: NativeCodexSessionSummary) => {
+        if (!machineId) return
+        setNativeCodexImporting(session.codexSessionId)
+        setNativeCodexError(null)
+        try {
+            const result = await props.api.importNativeCodexSession(machineId, {
+                codexSessionId: session.codexSessionId,
+                transcriptPath: session.transcriptPath
+            })
+            if (!result.success) {
+                setNativeCodexError(result.error)
+                return
+            }
+            haptic.notification('success')
+            setLastUsedMachineId(machineId)
+            if (session.cwd) {
+                addRecentPath(machineId, session.cwd)
+            }
+            props.onSuccess(result.sessionId)
+        } catch (error) {
+            haptic.notification('error')
+            setNativeCodexError(error instanceof Error ? error.message : 'Failed to import Codex CLI session')
+        } finally {
+            setNativeCodexImporting(null)
+        }
+    }, [addRecentPath, haptic, machineId, props, setLastUsedMachineId])
+
     const [quickStartPending, setQuickStartPending] = useState(false)
 
     const handleQuickStartSelect = useCallback((config: QuickStartConfig) => {
@@ -551,6 +611,58 @@ export function NewSession(props: {
                 isDisabled={isFormDisabled}
                 onAgentChange={setAgent}
             />
+
+            {agent === 'codex' && machineId ? (
+                <div className="space-y-2 px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                        <div>
+                            <div className="text-xs font-medium text-[var(--app-fg)]">Codex CLI sessions</div>
+                            <div className="text-xs text-[var(--app-hint)]">Attach a native Codex transcript from this machine.</div>
+                        </div>
+                        <button
+                            type="button"
+                            className="shrink-0 rounded border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] disabled:opacity-50"
+                            disabled={isFormDisabled || nativeCodexLoading}
+                            onClick={handleLoadNativeCodexSessions}
+                        >
+                            {nativeCodexLoading ? 'Scanning...' : 'Scan'}
+                        </button>
+                    </div>
+                    {nativeCodexError ? (
+                        <div className="text-xs text-red-600">{nativeCodexError}</div>
+                    ) : null}
+                    {nativeCodexSessions ? (
+                        nativeCodexSessions.length === 0 ? (
+                            <div className="text-xs text-[var(--app-hint)]">No native Codex sessions found.</div>
+                        ) : (
+                            <div className="max-h-48 overflow-y-auto rounded border border-[var(--app-border)]">
+                                {nativeCodexSessions.slice(0, 20).map((session) => {
+                                    const isImporting = nativeCodexImporting === session.codexSessionId
+                                    return (
+                                        <button
+                                            key={`${session.codexSessionId}:${session.transcriptPath}`}
+                                            type="button"
+                                            className="flex w-full items-center justify-between gap-3 border-b border-[var(--app-border)] px-2 py-2 text-left last:border-b-0 hover:bg-[var(--app-subtle-bg)] disabled:opacity-50"
+                                            disabled={isFormDisabled || Boolean(nativeCodexImporting)}
+                                            onClick={() => handleImportNativeCodexSession(session)}
+                                        >
+                                            <span className="min-w-0">
+                                                <span className="block truncate text-xs font-medium text-[var(--app-fg)]">{session.title}</span>
+                                                <span className="block truncate text-xs text-[var(--app-hint)]">
+                                                    {session.cwd ?? session.transcriptPath}
+                                                </span>
+                                            </span>
+                                            <span className="shrink-0 text-xs text-[var(--app-link)]">
+                                                {isImporting ? 'Importing...' : 'Import'}
+                                            </span>
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                        )
+                    ) : null}
+                </div>
+            ) : null}
 
             {/* Advanced options toggle */}
             <button
