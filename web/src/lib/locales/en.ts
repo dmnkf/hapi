@@ -87,6 +87,22 @@ export default {
   'session.outline.loadOlder': 'Load earlier',
   'session.outline.empty': 'No outline items in loaded messages',
   'session.outline.kind.user': 'User',
+  'session.activity.open': 'Activity',
+  'session.activity.close': 'Close activity',
+  'session.activity.title': 'Activity',
+  'session.activity.empty': 'No activity in loaded messages',
+  'session.activity.approvals': 'Approvals',
+  'session.activity.active': 'Active work',
+  'session.activity.files': 'Files touched',
+  'session.activity.recent': 'Recent tools',
+  'session.activity.conversation': 'Conversation',
+  'session.activity.noApprovals': 'No pending approvals',
+  'session.activity.noActive': 'No active work',
+  'session.activity.noFiles': 'No touched files in loaded messages',
+  'session.activity.noRecent': 'No recent tools',
+  'session.activity.tapToJump': 'Tap to jump to thread',
+  'session.activity.backgroundTasks': '{n} background tasks',
+  'session.activity.backgroundTasksHint': 'Subagent work still running',
 
   // Session tab bar
   'session.tab.chat': 'Chat',
@@ -171,7 +187,6 @@ export default {
 
   // Chat
   'chat.placeholder': 'Type a message…',
-  'composer.more': 'More actions',
   'chat.send': 'Send',
   'chat.abort': 'Abort',
   'chat.settings': 'Settings',
@@ -249,6 +264,7 @@ export default {
   'composer.abort': 'Abort',
   'composer.switchRemote': 'Switch to remote mode',
   'composer.attach': 'Attach file',
+  'composer.more': 'More actions',
   'composer.send': 'Send',
   'composer.stop': 'Stop',
   'composer.voice': 'Voice assistant',

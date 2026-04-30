@@ -16,9 +16,11 @@ import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks } from '@/chat/reconcile'
-import { buildConversationOutline } from '@/chat/outline'
+import { buildConversationOutline, getConversationMessageAnchorId, type ConversationOutlineItem } from '@/chat/outline'
+import { buildSessionActivity, getActivityQueueCount } from '@/chat/activity'
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
+import { ActivitySheet } from '@/components/AssistantChat/ActivitySheet'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
 import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { findUnsupportedCodexBuiltinSlashCommand } from '@/lib/codexSlashCommands'
@@ -77,6 +79,7 @@ export function SessionChat(props: {
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
     const [forceScrollToken, setForceScrollToken] = useState(0)
     const [outlineOpen, setOutlineOpen] = useState(false)
+    const [activityOpen, setActivityOpen] = useState(false)
     const agentFlavor = props.session.metadata?.flavor ?? null
     const controlledByUser = props.session.agentState?.controlledByUser === true
     const codexCollaborationModeSupported = agentFlavor === 'codex' && !controlledByUser
@@ -211,6 +214,7 @@ export function SessionChat(props: {
         normalizedCacheRef.current.clear()
         blocksByIdRef.current.clear()
         setOutlineOpen(false)
+        setActivityOpen(false)
     }, [props.session.id])
 
     const normalizedMessages: NormalizedMessage[] = useMemo(() => {
@@ -265,6 +269,32 @@ export function SessionChat(props: {
         () => getOutlineTitle(props.session),
         [props.session]
     )
+
+    const activity = useMemo(
+        () => buildSessionActivity(reconciled.blocks, props.session.agentState),
+        [reconciled.blocks, props.session.agentState]
+    )
+
+    const activityCount = useMemo(
+        () => getActivityQueueCount(activity, props.session.backgroundTaskCount ?? 0),
+        [activity, props.session.backgroundTaskCount]
+    )
+
+    const handleActivityOutlineSelect = useCallback((item: ConversationOutlineItem) => {
+        const target = document.getElementById(getConversationMessageAnchorId(item.targetMessageId))
+        if (target) {
+            target.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        }
+        setActivityOpen(false)
+    }, [])
+
+    const handleActivityToolJump = useCallback((targetToolId: string) => {
+        const target = document.getElementById(getConversationMessageAnchorId(`tool:${targetToolId}`))
+        if (target) {
+            target.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        }
+        setActivityOpen(false)
+    }, [])
 
     // Permission mode change handler
     const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
@@ -395,7 +425,8 @@ export function SessionChat(props: {
                 onBack={props.onBack}
                 onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
                 onViewTerminal={props.session.active && terminalSupported ? handleViewTerminal : undefined}
-                onOpenOutline={() => setOutlineOpen(true)}
+                onOpenActivity={() => setActivityOpen(true)}
+                activityCount={activityCount}
                 api={props.api}
                 onSessionDeleted={props.onBack}
             />
@@ -437,6 +468,27 @@ export function SessionChat(props: {
                         outlineTitle={outlineTitle}
                         outlineItems={outlineItems}
                         onOutlineOpenChange={setOutlineOpen}
+                    />
+
+                    <ActivitySheet
+                        open={activityOpen}
+                        api={props.api}
+                        sessionId={props.session.id}
+                        metadata={props.session.metadata}
+                        disabled={sessionInactive}
+                        activity={activity}
+                        backgroundTaskCount={props.session.backgroundTaskCount}
+                        outlineTitle={outlineTitle}
+                        outlineItems={outlineItems}
+                        hasMoreMessages={props.hasMoreMessages}
+                        isLoadingMoreMessages={props.isLoadingMoreMessages}
+                        onLoadMore={() => {
+                            void props.onLoadMore()
+                        }}
+                        onSelectOutline={handleActivityOutlineSelect}
+                        onJumpToTool={handleActivityToolJump}
+                        onRefresh={props.onRefresh}
+                        onClose={() => setActivityOpen(false)}
                     />
 
                     {codexCollaborationModeSupported && codexModelsState.error ? (

@@ -159,7 +159,8 @@ export function SessionHeader(props: {
     onBack: () => void
     onViewFiles?: () => void
     onViewTerminal?: () => void
-    onOpenOutline?: () => void
+    onOpenActivity?: () => void
+    activityCount?: number
     api: ApiClient | null
     onSessionDeleted?: () => void
 }) {
@@ -267,15 +268,20 @@ export function SessionHeader(props: {
                         </button>
                     ) : null}
 
-                    {props.onOpenOutline ? (
+                    {props.onOpenActivity ? (
                         <button
                             type="button"
-                            onClick={props.onOpenOutline}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                            title={t('session.outline.open')}
-                            aria-label={t('session.outline.open')}
+                            onClick={props.onOpenActivity}
+                            className="relative flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            title={t('session.activity.open')}
+                            aria-label={t('session.activity.open')}
                         >
                             <OutlineIcon />
+                            {props.activityCount && props.activityCount > 0 ? (
+                                <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-4 text-white">
+                                    {props.activityCount > 9 ? '9+' : props.activityCount}
+                                </span>
+                            ) : null}
                         </button>
                     ) : null}
 
