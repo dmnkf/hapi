@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ApiClient } from '@/api/client'
-import type { DirectoryEntry, Machine, NativeCodexSessionSummary } from '@/types/api'
+import type { DirectoryEntry, Machine, NativeClaudeSessionSummary, NativeCodexSessionSummary } from '@/types/api'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useMachinePathsExists } from '@/hooks/useMachinePathsExists'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
@@ -31,6 +31,10 @@ import { useQuickStartConfigs, type QuickStartConfig } from './useQuickStartConf
 import { formatRunnerSpawnError } from '../../utils/formatRunnerSpawnError'
 
 const ADVANCED_STORAGE_KEY = 'hapi:newSession:showAdvanced'
+
+type NativeAttachSession =
+    | ({ agent: 'claude' } & NativeClaudeSessionSummary)
+    | ({ agent: 'codex' } & NativeCodexSessionSummary)
 
 function loadShowAdvanced(): boolean {
     try {
@@ -145,10 +149,10 @@ export function NewSession(props: {
     const [directoryCreationConfirmed, setDirectoryCreationConfirmed] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [showAdvanced, setShowAdvanced] = useState(loadShowAdvanced)
-    const [nativeCodexSessions, setNativeCodexSessions] = useState<NativeCodexSessionSummary[] | null>(null)
-    const [nativeCodexLoading, setNativeCodexLoading] = useState(false)
-    const [nativeCodexImporting, setNativeCodexImporting] = useState<string | null>(null)
-    const [nativeCodexError, setNativeCodexError] = useState<string | null>(null)
+    const [nativeAttachSessions, setNativeAttachSessions] = useState<NativeAttachSession[] | null>(null)
+    const [nativeAttachLoading, setNativeAttachLoading] = useState(false)
+    const [nativeAttachImporting, setNativeAttachImporting] = useState<string | null>(null)
+    const [nativeAttachError, setNativeAttachError] = useState<string | null>(null)
     const worktreeInputRef = useRef<HTMLInputElement>(null)
     const machineDirectoryCacheRef = useRef(new Map<string, DirectoryEntry[]>())
 
@@ -266,15 +270,13 @@ export function NewSession(props: {
 
     useEffect(() => {
         machineDirectoryCacheRef.current.clear()
-        setNativeCodexSessions(null)
-        setNativeCodexError(null)
+        setNativeAttachSessions(null)
+        setNativeAttachError(null)
     }, [machineId])
 
     useEffect(() => {
-        if (agent !== 'codex') {
-            setNativeCodexSessions(null)
-            setNativeCodexError(null)
-        }
+        setNativeAttachSessions(null)
+        setNativeAttachError(null)
     }, [agent])
 
     const getSuggestions = useCallback(async (query: string): Promise<Suggestion[]> => {
@@ -481,37 +483,49 @@ export function NewSession(props: {
         }
     }
 
-    const handleLoadNativeCodexSessions = useCallback(async () => {
+    const handleLoadNativeSessions = useCallback(async () => {
         if (!machineId) return
-        setNativeCodexLoading(true)
-        setNativeCodexError(null)
+        if (agent !== 'claude' && agent !== 'codex') return
+        setNativeAttachLoading(true)
+        setNativeAttachError(null)
         try {
-            const result = await props.api.getNativeCodexSessions(machineId)
+            const result = agent === 'claude'
+                ? await props.api.getNativeClaudeSessions(machineId)
+                : await props.api.getNativeCodexSessions(machineId)
             if (!result.success) {
-                setNativeCodexError(result.error ?? 'Failed to list Codex CLI sessions')
-                setNativeCodexSessions([])
+                setNativeAttachError(result.error ?? `Failed to list ${agent === 'claude' ? 'Claude' : 'Codex'} CLI sessions`)
+                setNativeAttachSessions([])
                 return
             }
-            setNativeCodexSessions(result.sessions ?? [])
+            setNativeAttachSessions((result.sessions ?? []).map((session) => ({
+                ...session,
+                agent
+            } as NativeAttachSession)))
         } catch (error) {
-            setNativeCodexError(error instanceof Error ? error.message : 'Failed to list Codex CLI sessions')
-            setNativeCodexSessions([])
+            setNativeAttachError(error instanceof Error ? error.message : `Failed to list ${agent === 'claude' ? 'Claude' : 'Codex'} CLI sessions`)
+            setNativeAttachSessions([])
         } finally {
-            setNativeCodexLoading(false)
+            setNativeAttachLoading(false)
         }
-    }, [machineId, props.api])
+    }, [agent, machineId, props.api])
 
-    const handleImportNativeCodexSession = useCallback(async (session: NativeCodexSessionSummary) => {
+    const handleImportNativeSession = useCallback(async (session: NativeAttachSession) => {
         if (!machineId) return
-        setNativeCodexImporting(session.codexSessionId)
-        setNativeCodexError(null)
+        const nativeSessionId = session.agent === 'claude' ? session.claudeSessionId : session.codexSessionId
+        setNativeAttachImporting(nativeSessionId)
+        setNativeAttachError(null)
         try {
-            const result = await props.api.importNativeCodexSession(machineId, {
-                codexSessionId: session.codexSessionId,
-                transcriptPath: session.transcriptPath
-            })
+            const result = session.agent === 'claude'
+                ? await props.api.importNativeClaudeSession(machineId, {
+                    claudeSessionId: session.claudeSessionId,
+                    transcriptPath: session.transcriptPath
+                })
+                : await props.api.importNativeCodexSession(machineId, {
+                    codexSessionId: session.codexSessionId,
+                    transcriptPath: session.transcriptPath
+                })
             if (!result.success) {
-                setNativeCodexError(result.error)
+                setNativeAttachError(result.error)
                 return
             }
             haptic.notification('success')
@@ -522,9 +536,9 @@ export function NewSession(props: {
             props.onSuccess(result.sessionId)
         } catch (error) {
             haptic.notification('error')
-            setNativeCodexError(error instanceof Error ? error.message : 'Failed to import Codex CLI session')
+            setNativeAttachError(error instanceof Error ? error.message : `Failed to import ${session.agent === 'claude' ? 'Claude' : 'Codex'} CLI session`)
         } finally {
-            setNativeCodexImporting(null)
+            setNativeAttachImporting(null)
         }
     }, [addRecentPath, haptic, machineId, props, setLastUsedMachineId])
 
@@ -612,39 +626,46 @@ export function NewSession(props: {
                 onAgentChange={setAgent}
             />
 
-            {agent === 'codex' && machineId ? (
+            {(agent === 'claude' || agent === 'codex') && machineId ? (
                 <div className="space-y-2 px-3 py-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <div>
-                            <div className="text-xs font-medium text-[var(--app-fg)]">Codex CLI sessions</div>
-                            <div className="text-xs text-[var(--app-hint)]">Attach a native Codex transcript from this machine.</div>
+                            <div className="text-xs font-medium text-[var(--app-fg)]">
+                                {agent === 'claude' ? 'Claude Code sessions' : 'Codex CLI sessions'}
+                            </div>
+                            <div className="text-xs text-[var(--app-hint)]">
+                                Attach a native {agent === 'claude' ? 'Claude Code' : 'Codex'} transcript from this machine.
+                            </div>
                         </div>
                         <button
                             type="button"
                             className="shrink-0 rounded border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] disabled:opacity-50"
-                            disabled={isFormDisabled || nativeCodexLoading}
-                            onClick={handleLoadNativeCodexSessions}
+                            disabled={isFormDisabled || nativeAttachLoading}
+                            onClick={handleLoadNativeSessions}
                         >
-                            {nativeCodexLoading ? 'Scanning...' : 'Scan'}
+                            {nativeAttachLoading ? 'Scanning...' : 'Scan'}
                         </button>
                     </div>
-                    {nativeCodexError ? (
-                        <div className="text-xs text-red-600">{nativeCodexError}</div>
+                    {nativeAttachError ? (
+                        <div className="text-xs text-red-600">{nativeAttachError}</div>
                     ) : null}
-                    {nativeCodexSessions ? (
-                        nativeCodexSessions.length === 0 ? (
-                            <div className="text-xs text-[var(--app-hint)]">No native Codex sessions found.</div>
+                    {nativeAttachSessions ? (
+                        nativeAttachSessions.length === 0 ? (
+                            <div className="text-xs text-[var(--app-hint)]">
+                                No native {agent === 'claude' ? 'Claude Code' : 'Codex'} sessions found.
+                            </div>
                         ) : (
                             <div className="max-h-48 overflow-y-auto rounded border border-[var(--app-border)]">
-                                {nativeCodexSessions.slice(0, 20).map((session) => {
-                                    const isImporting = nativeCodexImporting === session.codexSessionId
+                                {nativeAttachSessions.slice(0, 20).map((session) => {
+                                    const nativeSessionId = session.agent === 'claude' ? session.claudeSessionId : session.codexSessionId
+                                    const isImporting = nativeAttachImporting === nativeSessionId
                                     return (
                                         <button
-                                            key={`${session.codexSessionId}:${session.transcriptPath}`}
+                                            key={`${session.agent}:${nativeSessionId}:${session.transcriptPath}`}
                                             type="button"
                                             className="flex w-full items-center justify-between gap-3 border-b border-[var(--app-border)] px-2 py-2 text-left last:border-b-0 hover:bg-[var(--app-subtle-bg)] disabled:opacity-50"
-                                            disabled={isFormDisabled || Boolean(nativeCodexImporting)}
-                                            onClick={() => handleImportNativeCodexSession(session)}
+                                            disabled={isFormDisabled || Boolean(nativeAttachImporting)}
+                                            onClick={() => handleImportNativeSession(session)}
                                         >
                                             <span className="min-w-0">
                                                 <span className="block truncate text-xs font-medium text-[var(--app-fg)]">{session.title}</span>

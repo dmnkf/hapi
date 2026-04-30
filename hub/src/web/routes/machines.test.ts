@@ -143,4 +143,91 @@ describe('machines routes', () => {
             skippedMessages: 1
         })
     })
+
+    it('returns native Claude sessions for an online machine', async () => {
+        const machine = createMachine()
+        const engine = {
+            getMachine: () => machine,
+            getMachineByNamespace: () => machine,
+            listNativeClaudeSessions: async () => ({
+                success: true,
+                sessions: [
+                    {
+                        claudeSessionId: 'claude-session-1',
+                        transcriptPath: '/home/me/.claude/projects/repo/claude-session-1.jsonl',
+                        cwd: '/repo',
+                        title: 'Fix reconnect',
+                        updatedAt: 123,
+                        messageCount: 2,
+                        userMessageCount: 1,
+                        agentMessageCount: 1
+                    }
+                ]
+            })
+        } as Partial<SyncEngine>
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            await next()
+        })
+        app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
+
+        const response = await app.request('/api/machines/machine-1/native-claude-sessions')
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            success: true,
+            sessions: [
+                {
+                    claudeSessionId: 'claude-session-1',
+                    transcriptPath: '/home/me/.claude/projects/repo/claude-session-1.jsonl',
+                    cwd: '/repo',
+                    title: 'Fix reconnect',
+                    updatedAt: 123,
+                    messageCount: 2,
+                    userMessageCount: 1,
+                    agentMessageCount: 1
+                }
+            ]
+        })
+    })
+
+    it('imports a native Claude session for an online machine', async () => {
+        const machine = createMachine()
+        const engine = {
+            getMachine: () => machine,
+            getMachineByNamespace: () => machine,
+            importNativeClaudeSession: async (_machineId: string, params: { claudeSessionId?: string }) => ({
+                success: true,
+                sessionId: 'hapi-session-1',
+                claudeSessionId: params.claudeSessionId ?? 'claude-session-1',
+                transcriptPath: '/home/me/.claude/projects/repo/claude-session-1.jsonl',
+                importedMessages: 2,
+                skippedMessages: 1
+            })
+        } as Partial<SyncEngine>
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            await next()
+        })
+        app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
+
+        const response = await app.request('/api/machines/machine-1/native-claude-sessions/import', {
+            method: 'POST',
+            body: JSON.stringify({ claudeSessionId: 'claude-session-1' })
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            success: true,
+            sessionId: 'hapi-session-1',
+            claudeSessionId: 'claude-session-1',
+            transcriptPath: '/home/me/.claude/projects/repo/claude-session-1.jsonl',
+            importedMessages: 2,
+            skippedMessages: 1
+        })
+    })
 })

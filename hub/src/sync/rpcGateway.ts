@@ -70,9 +70,27 @@ export type RpcNativeCodexSession = {
     model?: string
 }
 
+export type RpcNativeClaudeSession = {
+    claudeSessionId: string
+    transcriptPath: string
+    cwd: string | null
+    title: string
+    updatedAt: number
+    messageCount: number
+    userMessageCount: number
+    agentMessageCount: number
+    model?: string
+}
+
 export type RpcListNativeCodexSessionsResponse = {
     success: boolean
     sessions?: RpcNativeCodexSession[]
+    error?: string
+}
+
+export type RpcListNativeClaudeSessionsResponse = {
+    success: boolean
+    sessions?: RpcNativeClaudeSession[]
     error?: string
 }
 
@@ -81,6 +99,20 @@ export type RpcImportNativeCodexSessionResponse =
         success: true
         sessionId: string
         codexSessionId: string
+        transcriptPath: string
+        importedMessages: number
+        skippedMessages: number
+    }
+    | {
+        success: false
+        error: string
+    }
+
+export type RpcImportNativeClaudeSessionResponse =
+    | {
+        success: true
+        sessionId: string
+        claudeSessionId: string
         transcriptPath: string
         importedMessages: number
         skippedMessages: number
@@ -298,11 +330,22 @@ export class RpcGateway {
         return await this.machineRpc(machineId, 'listNativeCodexSessions', {}) as RpcListNativeCodexSessionsResponse
     }
 
+    async listNativeClaudeSessions(machineId: string): Promise<RpcListNativeClaudeSessionsResponse> {
+        return await this.machineRpc(machineId, 'listNativeClaudeSessions', {}) as RpcListNativeClaudeSessionsResponse
+    }
+
     async importNativeCodexSession(
         machineId: string,
         params: { codexSessionId?: string; transcriptPath?: string }
     ): Promise<RpcImportNativeCodexSessionResponse> {
         return await this.machineRpc(machineId, 'importNativeCodexSession', params) as RpcImportNativeCodexSessionResponse
+    }
+
+    async importNativeClaudeSession(
+        machineId: string,
+        params: { claudeSessionId?: string; transcriptPath?: string }
+    ): Promise<RpcImportNativeClaudeSessionResponse> {
+        return await this.machineRpc(machineId, 'importNativeClaudeSession', params) as RpcImportNativeClaudeSessionResponse
     }
 
     private async sessionRpc(sessionId: string, method: string, params: unknown): Promise<unknown> {

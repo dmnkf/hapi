@@ -22,8 +22,10 @@ import {
     type RpcDeleteUploadResponse,
     type RpcListDirectoryResponse,
     type RpcListCodexModelsResponse,
+    type RpcListNativeClaudeSessionsResponse,
     type RpcListNativeCodexSessionsResponse,
     type RpcPathExistsResponse,
+    type RpcImportNativeClaudeSessionResponse,
     type RpcImportNativeCodexSessionResponse,
     type RpcReadFileResponse,
     type RpcUploadFileResponse
@@ -39,8 +41,10 @@ export type {
     RpcDeleteUploadResponse,
     RpcListDirectoryResponse,
     RpcListCodexModelsResponse,
+    RpcListNativeClaudeSessionsResponse,
     RpcListNativeCodexSessionsResponse,
     RpcPathExistsResponse,
+    RpcImportNativeClaudeSessionResponse,
     RpcImportNativeCodexSessionResponse,
     RpcReadFileResponse,
     RpcUploadFileResponse
@@ -626,10 +630,21 @@ export class SyncEngine {
         return await this.rpcGateway.listNativeCodexSessions(machineId)
     }
 
+    async listNativeClaudeSessions(machineId: string): Promise<RpcListNativeClaudeSessionsResponse> {
+        return await this.rpcGateway.listNativeClaudeSessions(machineId)
+    }
+
     async importNativeCodexSession(
         machineId: string,
         params: { codexSessionId?: string; transcriptPath?: string }
     ): Promise<RpcImportNativeCodexSessionResponse> {
         return await this.rpcGateway.importNativeCodexSession(machineId, params)
+    }
+
+    async importNativeClaudeSession(
+        machineId: string,
+        params: { claudeSessionId?: string; transcriptPath?: string }
+    ): Promise<RpcImportNativeClaudeSessionResponse> {
+        return await this.rpcGateway.importNativeClaudeSession(machineId, params)
     }
 }

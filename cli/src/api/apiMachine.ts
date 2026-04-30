@@ -19,6 +19,7 @@ import type { SpawnSessionOptions, SpawnSessionResult } from '../modules/common/
 import { applyVersionedAck } from './versionedUpdate'
 import { buildSocketIoExtraHeaderOptions } from './hubExtraHeaders'
 import { importNativeCodexSession, listNativeCodexSessions } from '@/codex/utils/nativeCodexSessions'
+import { importNativeClaudeSession, listNativeClaudeSessions } from '@/claude/utils/nativeClaudeSessions'
 
 interface ServerToRunnerEvents {
     update: (data: Update) => void
@@ -215,6 +216,13 @@ export class ApiMachineClient {
             }
         })
 
+        this.rpcHandlerManager.registerHandler('listNativeClaudeSessions', async () => {
+            return {
+                success: true,
+                sessions: await listNativeClaudeSessions()
+            }
+        })
+
         this.rpcHandlerManager.registerHandler('importNativeCodexSession', async (params: any) => {
             const { codexSessionId, transcriptPath } = params || {}
             if (typeof codexSessionId !== 'string' && typeof transcriptPath !== 'string') {
@@ -227,6 +235,22 @@ export class ApiMachineClient {
                 api,
                 machine: this.machine,
                 codexSessionId: typeof codexSessionId === 'string' ? codexSessionId : undefined,
+                transcriptPath: typeof transcriptPath === 'string' ? transcriptPath : undefined
+            })
+        })
+
+        this.rpcHandlerManager.registerHandler('importNativeClaudeSession', async (params: any) => {
+            const { claudeSessionId, transcriptPath } = params || {}
+            if (typeof claudeSessionId !== 'string' && typeof transcriptPath !== 'string') {
+                return { success: false, error: 'claudeSessionId or transcriptPath is required' }
+            }
+
+            const { ApiClient } = await import('./api')
+            const api = await ApiClient.create()
+            return await importNativeClaudeSession({
+                api,
+                machine: this.machine,
+                claudeSessionId: typeof claudeSessionId === 'string' ? claudeSessionId : undefined,
                 transcriptPath: typeof transcriptPath === 'string' ? transcriptPath : undefined
             })
         })

@@ -30,6 +30,13 @@ const importNativeCodexSessionSchema = z.object({
     message: 'codexSessionId or transcriptPath is required'
 })
 
+const importNativeClaudeSessionSchema = z.object({
+    claudeSessionId: z.string().min(1).optional(),
+    transcriptPath: z.string().min(1).optional()
+}).refine((value) => Boolean(value.claudeSessionId || value.transcriptPath), {
+    message: 'claudeSessionId or transcriptPath is required'
+})
+
 export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
@@ -180,6 +187,29 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
     })
 
+    app.get('/machines/:id/native-claude-sessions', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ success: false, error: 'Not connected' }, 503)
+        }
+
+        const machineId = c.req.param('id')
+        const machine = requireMachine(c, engine, machineId)
+        if (machine instanceof Response) {
+            return machine
+        }
+
+        try {
+            const result = await engine.listNativeClaudeSessions(machineId)
+            return c.json(result)
+        } catch (error) {
+            return c.json({
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to list native Claude sessions'
+            }, 500)
+        }
+    })
+
     app.post('/machines/:id/native-codex-sessions/import', async (c) => {
         const engine = getSyncEngine()
         if (!engine) {
@@ -205,6 +235,35 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return c.json({
                 success: false,
                 error: error instanceof Error ? error.message : 'Failed to import native Codex session'
+            }, 500)
+        }
+    })
+
+    app.post('/machines/:id/native-claude-sessions/import', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ success: false, error: 'Not connected' }, 503)
+        }
+
+        const machineId = c.req.param('id')
+        const machine = requireMachine(c, engine, machineId)
+        if (machine instanceof Response) {
+            return machine
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = importNativeClaudeSessionSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid body' }, 400)
+        }
+
+        try {
+            const result = await engine.importNativeClaudeSession(machineId, parsed.data)
+            return c.json(result)
+        } catch (error) {
+            return c.json({
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to import native Claude session'
             }, 500)
         }
     })

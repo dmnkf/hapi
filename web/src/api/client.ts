@@ -11,7 +11,9 @@ import type {
     MachinePathsExistsResponse,
     MachinesResponse,
     MessagesResponse,
+    NativeClaudeSessionsResponse,
     NativeCodexSessionsResponse,
+    ImportNativeClaudeSessionResponse,
     ImportNativeCodexSessionResponse,
     CodexModelsResponse,
     PermissionMode,
@@ -443,12 +445,31 @@ export class ApiClient {
         )
     }
 
+    async getNativeClaudeSessions(machineId: string): Promise<NativeClaudeSessionsResponse> {
+        return await this.request<NativeClaudeSessionsResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/native-claude-sessions`
+        )
+    }
+
     async importNativeCodexSession(
         machineId: string,
         options: { codexSessionId?: string; transcriptPath?: string }
     ): Promise<ImportNativeCodexSessionResponse> {
         return await this.request<ImportNativeCodexSessionResponse>(
             `/api/machines/${encodeURIComponent(machineId)}/native-codex-sessions/import`,
+            {
+                method: 'POST',
+                body: JSON.stringify(options)
+            }
+        )
+    }
+
+    async importNativeClaudeSession(
+        machineId: string,
+        options: { claudeSessionId?: string; transcriptPath?: string }
+    ): Promise<ImportNativeClaudeSessionResponse> {
+        return await this.request<ImportNativeClaudeSessionResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/native-claude-sessions/import`,
             {
                 method: 'POST',
                 body: JSON.stringify(options)
