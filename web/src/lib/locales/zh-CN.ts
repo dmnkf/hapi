@@ -223,6 +223,7 @@ export default {
   'composer.abort': '中止',
   'composer.switchRemote': '切换到远程模式',
   'composer.attach': '添加文件',
+  'composer.more': '更多操作',
   'composer.send': '发送',
   'composer.stop': '停止',
   'composer.voice': '语音助手',

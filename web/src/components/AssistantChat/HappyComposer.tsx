@@ -23,6 +23,7 @@ import { usePWAInstall } from '@/hooks/usePWAInstall'
 import { supportsEffort, supportsModelChange } from '@hapi/protocol'
 import { markSkillUsed } from '@/lib/recent-skills'
 import { useComposerDraft } from '@/hooks/useComposerDraft'
+import { OPEN_SESSION_SETTINGS_EVENT, type OpenSessionSettingsDetail } from '@/lib/sessionSettingsEvent'
 import { FloatingOverlay } from '@/components/ChatInput/FloatingOverlay'
 import { Autocomplete } from '@/components/ChatInput/Autocomplete'
 import { StatusBar } from '@/components/AssistantChat/StatusBar'
@@ -167,6 +168,20 @@ export function HappyComposer(props: {
     const prevControlledByUser = useRef(controlledByUser)
 
     useComposerDraft(sessionId, composerText, (text) => api.composer().setText(text))
+
+    // Open settings overlay when the header status pill (or any other surface)
+    // dispatches the session-scoped open-settings event.
+    useEffect(() => {
+        if (!sessionId) return
+        const onOpen = (event: Event) => {
+            const detail = (event as CustomEvent<OpenSessionSettingsDetail>).detail
+            if (detail?.sessionId === sessionId) {
+                setShowSettings(true)
+            }
+        }
+        window.addEventListener(OPEN_SESSION_SETTINGS_EVENT, onOpen as EventListener)
+        return () => window.removeEventListener(OPEN_SESSION_SETTINGS_EVENT, onOpen as EventListener)
+    }, [sessionId])
 
     useEffect(() => {
         setInputState((prev) => {

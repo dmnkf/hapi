@@ -171,6 +171,7 @@ export default {
 
   // Chat
   'chat.placeholder': 'Type a message…',
+  'composer.more': 'More actions',
   'chat.send': 'Send',
   'chat.abort': 'Abort',
   'chat.settings': 'Settings',

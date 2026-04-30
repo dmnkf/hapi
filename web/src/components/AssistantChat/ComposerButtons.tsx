@@ -1,4 +1,5 @@
 import { ComposerPrimitive } from '@assistant-ui/react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { ConversationStatus } from '@/realtime/types'
 import { useTranslation } from '@/lib/use-translation'
 
@@ -193,6 +194,23 @@ function AbortIcon(props: { spinning: boolean }) {
     )
 }
 
+function MoreIcon() {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+        >
+            <circle cx="5" cy="12" r="1.7" />
+            <circle cx="12" cy="12" r="1.7" />
+            <circle cx="19" cy="12" r="1.7" />
+        </svg>
+    )
+}
+
 function SendIcon() {
     return (
         <svg
@@ -342,6 +360,55 @@ export function ComposerButtons(props: {
 }) {
     const { t } = useTranslation()
     const isVoiceConnected = props.voiceStatus === 'connected'
+    const [overflowOpen, setOverflowOpen] = useState(false)
+    const overflowContainerRef = useRef<HTMLDivElement>(null)
+
+    // Close the overflow popover when clicking/tapping outside.
+    useEffect(() => {
+        if (!overflowOpen) return
+        const onDocPointer = (event: Event) => {
+            if (!overflowContainerRef.current) return
+            if (!(event.target instanceof Node)) return
+            if (!overflowContainerRef.current.contains(event.target)) {
+                setOverflowOpen(false)
+            }
+        }
+        document.addEventListener('pointerdown', onDocPointer, true)
+        return () => document.removeEventListener('pointerdown', onDocPointer, true)
+    }, [overflowOpen])
+
+    // Reasoning: keep the visible row to the most-frequent actions (Attach,
+    // Slash, Settings, Abort, mic-mute when in a live call) and tuck rare
+    // controls (Terminal, Switch-to-remote) behind a "more" popover so the
+    // toolbar doesn't bloat past 5 buttons on phones.
+    const overflowItems: Array<{ key: string; label: string; icon: ReactElement; onClick: () => void; disabled?: boolean; tone?: 'default' | 'switch' | 'terminal' }> = []
+    if (props.showTerminalButton) {
+        overflowItems.push({
+            key: 'terminal',
+            label: props.terminalLabel,
+            icon: <TerminalIcon />,
+            onClick: props.onTerminal,
+            disabled: props.terminalDisabled,
+            tone: 'terminal',
+        })
+    }
+    if (props.showSwitchButton) {
+        overflowItems.push({
+            key: 'switch',
+            label: t('composer.switchRemote'),
+            icon: <SwitchToRemoteIcon />,
+            onClick: props.onSwitch,
+            disabled: props.switchDisabled,
+            tone: 'switch',
+        })
+    }
+
+    const toneClass = (tone?: 'default' | 'switch' | 'terminal') =>
+        tone === 'terminal'
+            ? 'hover:text-emerald-500'
+            : tone === 'switch'
+                ? 'hover:text-blue-500'
+                : 'hover:text-[var(--app-fg)]'
 
     return (
         <div className="flex items-center justify-between px-2 pb-2">
@@ -381,19 +448,6 @@ export function ComposerButtons(props: {
                     </button>
                 ) : null}
 
-                {props.showTerminalButton ? (
-                    <button
-                        type="button"
-                        aria-label={props.terminalLabel}
-                        title={props.terminalLabel}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={props.onTerminal}
-                        disabled={props.terminalDisabled}
-                    >
-                        <TerminalIcon />
-                    </button>
-                ) : null}
-
                 {props.showAbortButton ? (
                     <button
                         type="button"
@@ -404,19 +458,6 @@ export function ComposerButtons(props: {
                         onClick={props.onAbort}
                     >
                         <AbortIcon spinning={props.isAborting} />
-                    </button>
-                ) : null}
-
-                {props.showSwitchButton ? (
-                    <button
-                        type="button"
-                        aria-label={t('composer.switchRemote')}
-                        title={t('composer.switchRemote')}
-                        disabled={props.switchDisabled}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={props.onSwitch}
-                    >
-                        <SwitchToRemoteIcon />
                     </button>
                 ) : null}
 
@@ -434,6 +475,48 @@ export function ComposerButtons(props: {
                     >
                         <SpeakerIcon muted={props.voiceMicMuted} />
                     </button>
+                ) : null}
+
+                {overflowItems.length > 0 ? (
+                    <div ref={overflowContainerRef} className="relative">
+                        <button
+                            type="button"
+                            aria-label={t('composer.more')}
+                            title={t('composer.more')}
+                            aria-haspopup="menu"
+                            aria-expanded={overflowOpen}
+                            onClick={() => setOverflowOpen((prev) => !prev)}
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]"
+                        >
+                            <MoreIcon />
+                        </button>
+
+                        {overflowOpen ? (
+                            <div
+                                role="menu"
+                                className="absolute bottom-full left-0 z-30 mb-2 min-w-[180px] rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] p-1 shadow-lg"
+                            >
+                                {overflowItems.map((item) => (
+                                    <button
+                                        key={item.key}
+                                        type="button"
+                                        role="menuitem"
+                                        disabled={item.disabled}
+                                        onClick={() => {
+                                            setOverflowOpen(false)
+                                            if (!item.disabled) item.onClick()
+                                        }}
+                                        className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-[var(--app-fg)] transition-colors hover:bg-[var(--app-secondary-bg)] ${toneClass(item.tone)} disabled:cursor-not-allowed disabled:opacity-50`}
+                                    >
+                                        <span className="flex h-5 w-5 items-center justify-center text-[var(--app-fg)]/70">
+                                            {item.icon}
+                                        </span>
+                                        <span className="truncate">{item.label}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        ) : null}
+                    </div>
                 ) : null}
             </div>
 

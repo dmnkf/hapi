@@ -405,10 +405,9 @@ export function SessionChat(props: {
             )}
 
             {sessionInactive ? (
-                <div className="px-3 pt-3">
-                    <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
-                        Session is inactive. Sending will resume it automatically.
-                    </div>
+                <div className="mx-auto flex w-full max-w-content items-center gap-2 px-3 py-1 text-[11px] text-[var(--app-hint)]">
+                    <span aria-hidden="true" className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-hint)] opacity-60" />
+                    <span className="truncate">Inactive — send to resume</span>
                 </div>
             ) : null}
 

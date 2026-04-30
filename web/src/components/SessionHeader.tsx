@@ -1,12 +1,14 @@
 import { useId, useMemo, useRef, useState } from 'react'
 import type { Session } from '@/types/api'
 import type { ApiClient } from '@/api/client'
+import { PERMISSION_MODE_LABELS, PERMISSION_MODE_TONES } from '@hapi/protocol'
 import { isTelegramApp } from '@/hooks/useTelegram'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { getSessionModelLabel } from '@/lib/sessionModelLabel'
+import { dispatchOpenSessionSettings } from '@/lib/sessionSettingsEvent'
 import { useTranslation } from '@/lib/use-translation'
 import { isRemoteTerminalSupported } from '@/utils/terminalSupport'
 
@@ -105,6 +107,53 @@ function MoreVerticalIcon(props: { className?: string }) {
     )
 }
 
+function SessionStatusPill(props: {
+    session: Session
+    modelText?: string
+    onOpen: () => void
+}) {
+    const { session, modelText, onOpen } = props
+    const flavorRaw = session.metadata?.flavor?.trim() || ''
+    const flavorLabel = flavorRaw
+        ? flavorRaw.charAt(0).toUpperCase() + flavorRaw.slice(1)
+        : 'unknown'
+    const permissionMode = session.permissionMode
+    const permissionLabel = permissionMode ? PERMISSION_MODE_LABELS[permissionMode] : null
+    const permissionTone = permissionMode ? PERMISSION_MODE_TONES[permissionMode] : 'neutral'
+
+    const toneRing = permissionTone === 'danger'
+        ? 'ring-1 ring-red-500/40'
+        : permissionTone === 'warning'
+            ? 'ring-1 ring-amber-500/40'
+            : permissionTone === 'info'
+                ? 'ring-1 ring-blue-500/40'
+                : 'ring-1 ring-[var(--app-divider)]'
+
+    return (
+        <button
+            type="button"
+            onClick={onOpen}
+            className={`session-status-pill inline-flex max-w-full shrink items-center gap-1.5 truncate rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] text-[var(--app-fg)]/80 transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] ${toneRing}`}
+            aria-label="Open session settings"
+        >
+            <span aria-hidden="true" className="text-[var(--app-hint)]">❖</span>
+            <span className="shrink-0">{flavorLabel}</span>
+            {modelText ? (
+                <>
+                    <span aria-hidden="true" className="text-[var(--app-hint)]">·</span>
+                    <span className="truncate">{modelText}</span>
+                </>
+            ) : null}
+            {permissionLabel ? (
+                <>
+                    <span aria-hidden="true" className="text-[var(--app-hint)]">·</span>
+                    <span className="shrink-0 text-[var(--app-fg)]/70">{permissionLabel}</span>
+                </>
+            ) : null}
+        </button>
+    )
+}
+
 export function SessionHeader(props: {
     session: Session
     onBack: () => void
@@ -177,27 +226,21 @@ export function SessionHeader(props: {
                         </svg>
                     </button>
 
-                    {/* Session info - two lines: title and path */}
+                    {/* Session info - title + tappable status pill (flavor / model / permission) */}
                     <div className="min-w-0 flex-1">
                         <div className="truncate text-[15px] font-semibold leading-tight">
                             {title}
                         </div>
-                        <div className="mt-0.5 flex items-center gap-1.5 overflow-hidden text-[11px] text-[var(--app-hint)] leading-tight">
-                            <span className="inline-flex shrink-0 items-center gap-1">
-                                <span aria-hidden="true">❖</span>
-                                {session.metadata?.flavor?.trim() || 'unknown'}
-                            </span>
-                            {modelLabel ? (
-                                <>
-                                    <span aria-hidden="true" className="shrink-0">·</span>
-                                    <span className="truncate">{modelLabel.value}</span>
-                                </>
-                            ) : null}
+                        <div className="mt-0.5 flex items-center gap-1.5 overflow-hidden text-[11px] leading-tight">
+                            <SessionStatusPill
+                                session={session}
+                                modelText={modelLabel?.value}
+                                onOpen={() => dispatchOpenSessionSettings(session.id)}
+                            />
                             {worktreeBranch ? (
-                                <>
-                                    <span aria-hidden="true" className="shrink-0">·</span>
-                                    <span className="truncate">{worktreeBranch}</span>
-                                </>
+                                <span className="truncate text-[var(--app-hint)]">
+                                    {worktreeBranch}
+                                </span>
                             ) : null}
                         </div>
                     </div>
