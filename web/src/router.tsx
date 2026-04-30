@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo } from 'react'
 import type { CSSProperties } from 'react'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
+import { useTabSwipe } from '@/hooks/useTabSwipe'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { useQueryClient } from '@tanstack/react-query'
@@ -38,7 +39,6 @@ import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
 import { clearDraftsAfterSend } from '@/lib/clearDraftsAfterSend'
 import type { Machine } from '@/types/api'
-import { SessionTabBar } from '@/components/SessionTabBar'
 import { FocusBanner } from '@/components/FocusBanner'
 import { enterFocusQueue, syncFocusIndexToSession } from '@/lib/focusQueue'
 import { useFocusQueue } from '@/hooks/useFocusQueue'
@@ -555,6 +555,8 @@ function SessionDetailRoute() {
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
     const basePath = `/sessions/${sessionId}`
     const isChat = pathname === basePath || pathname === `${basePath}/`
+    const isFiles = pathname.startsWith(`${basePath}/files`) || pathname.startsWith(`${basePath}/file`)
+    const isTerminal = pathname.startsWith(`${basePath}/terminal`)
     const focusQueue = useFocusQueue()
     const isFocusActive = focusQueue.active && focusQueue.ids.includes(sessionId)
 
@@ -569,17 +571,52 @@ function SessionDetailRoute() {
     }, [navigate])
     const { containerRef: swipeRef, offset: swipeOffset, progress: swipeProgress } = useSwipeBack(handleSwipeBack)
 
+    // Tab order: Chat → Files → Terminal. Swipe-left advances, swipe-right
+    // goes back. From Chat, swiping right falls back to swipe-back behavior
+    // (handled by useSwipeBack at the left edge).
+    const goNextTab = useCallback(() => {
+        if (isChat) {
+            startViewTransition(() => navigate({
+                to: '/sessions/$sessionId/files',
+                params: { sessionId }
+            }))
+        } else if (isFiles) {
+            startViewTransition(() => navigate({
+                to: '/sessions/$sessionId/terminal',
+                params: { sessionId }
+            }))
+        }
+    }, [navigate, sessionId, isChat, isFiles])
+
+    const goPrevTab = useCallback(() => {
+        if (isTerminal) {
+            startViewTransition(() => navigate({
+                to: '/sessions/$sessionId/files',
+                params: { sessionId }
+            }))
+        } else if (isFiles) {
+            startViewTransition(() => navigate({
+                to: '/sessions/$sessionId',
+                params: { sessionId }
+            }))
+        }
+    }, [navigate, sessionId, isTerminal, isFiles])
+
+    const { containerRef: tabSwipeRef } = useTabSwipe({
+        onSwipeLeft: goNextTab,
+        onSwipeRight: goPrevTab,
+    })
+
     return (
         <div
             ref={swipeRef}
-            className="flex h-full min-h-0 flex-col [--app-floating-bottom-offset:52px] lg:[--app-floating-bottom-offset:0px]"
+            className="flex h-full min-h-0 flex-col [--app-floating-bottom-offset:0px]"
         >
             <SwipeBackIndicator offset={swipeOffset} progress={swipeProgress} />
             {isFocusActive ? <FocusBanner sessionId={sessionId} /> : null}
-            <div className="flex-1 min-h-0">
+            <div ref={tabSwipeRef} className="flex-1 min-h-0">
                 {isChat ? <SessionPage /> : <Outlet />}
             </div>
-            <SessionTabBar />
         </div>
     )
 }
