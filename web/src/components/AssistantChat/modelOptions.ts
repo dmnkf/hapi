@@ -1,7 +1,7 @@
 import { MODEL_OPTIONS } from '@/components/NewSession/types'
 import { getClaudeComposerModelOptions, getNextClaudeComposerModel } from './claudeModelOptions'
 import type { ClaudeComposerModelOption } from './claudeModelOptions'
-import type { SessionCapabilities } from '@hapi/protocol'
+import { getModelDisplayLabel, type SessionCapabilities } from '@hapi/protocol'
 
 export type ModelOption = ClaudeComposerModelOption
 
@@ -43,7 +43,7 @@ function getRuntimeModelOptions(
         ...(opts?.includeAuto === false ? [] : [{ value: null, label: opts?.autoLabel ?? 'Auto' }]),
         ...runtimeModels.map((model) => ({
             value: model.id,
-            label: model.label ?? model.id
+            label: getModelDisplayLabel(model.id, model.label) ?? model.id
         }))
     ]
     return withCurrentModelOption(options, currentModel)

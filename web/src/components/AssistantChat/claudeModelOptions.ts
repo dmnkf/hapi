@@ -1,4 +1,4 @@
-import { CLAUDE_MODEL_PRESETS, getClaudeModelLabel } from '@hapi/protocol'
+import { CLAUDE_MODEL_PRESETS, getClaudeModelDisplayLabel } from '@hapi/protocol'
 
 export type ClaudeComposerModelOption = {
     value: string | null
@@ -26,13 +26,13 @@ export function getClaudeComposerModelOptions(currentModel?: string | null): Cla
     ) {
         options.push({
             value: normalizedCurrentModel,
-            label: getClaudeModelLabel(normalizedCurrentModel) ?? normalizedCurrentModel
+            label: getClaudeModelDisplayLabel(normalizedCurrentModel, { includeValue: true }) ?? normalizedCurrentModel
         })
     }
 
     options.push(...CLAUDE_MODEL_PRESETS.map((model) => ({
         value: model,
-        label: getClaudeModelLabel(model) ?? model
+        label: getClaudeModelDisplayLabel(model, { includeValue: true }) ?? model
     })))
 
     return options

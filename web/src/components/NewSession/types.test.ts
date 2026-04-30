@@ -6,10 +6,10 @@ describe('Claude model options', () => {
     it('includes 1m model options in the expected order', () => {
         expect(MODEL_OPTIONS.claude).toEqual([
             { value: 'auto', label: 'Default' },
-            { value: 'opus', label: 'Opus' },
-            { value: 'opus[1m]', label: 'Opus 1M' },
-            { value: 'sonnet', label: 'Sonnet' },
-            { value: 'sonnet[1m]', label: 'Sonnet 1M' },
+            { value: 'opus', label: 'Opus (opus)' },
+            { value: 'opus[1m]', label: 'Opus 1M (opus[1m])' },
+            { value: 'sonnet', label: 'Sonnet (sonnet)' },
+            { value: 'sonnet[1m]', label: 'Sonnet 1M (sonnet[1m])' },
         ])
     })
 

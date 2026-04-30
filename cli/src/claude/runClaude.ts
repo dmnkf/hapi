@@ -20,6 +20,7 @@ import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { normalizeClaudeSessionModel } from './model';
 import { normalizeClaudeSessionEffort } from './effort';
 import { getInvokedCwd } from '@/utils/invokedCwd';
+import { runtimeSlashCommandsFromClaudeSdk } from './slashCommands';
 
 export interface StartOptions {
     model?: string
@@ -71,6 +72,10 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 tools: sdkMetadata.tools,
                 slashCommands: sdkMetadata.slashCommands
             }));
+            const runtimeSlashCommands = runtimeSlashCommandsFromClaudeSdk(sdkMetadata.slashCommands);
+            if (runtimeSlashCommands) {
+                session.emitSessionSlashCommands(runtimeSlashCommands);
+            }
             logger.debug('[start] Session metadata updated with SDK capabilities');
         } catch (error) {
             logger.debug('[start] Failed to update session metadata:', error);

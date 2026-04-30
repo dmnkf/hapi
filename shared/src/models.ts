@@ -77,6 +77,34 @@ export function getClaudeModelLabel(model: string): string | null {
     return CLAUDE_MODEL_LABELS[trimmedModel as ClaudeModelPreset] ?? null
 }
 
+export function getModelDisplayLabel(id: string, label?: string | null): string | null {
+    const trimmedId = id.trim()
+    if (!trimmedId) {
+        return null
+    }
+
+    const trimmedLabel = label?.trim()
+    if (!trimmedLabel || trimmedLabel === trimmedId) {
+        return trimmedId
+    }
+
+    return `${trimmedLabel} (${trimmedId})`
+}
+
+export function getClaudeModelDisplayLabel(model: string, options?: { includeValue?: boolean }): string | null {
+    const trimmedModel = model.trim()
+    if (!trimmedModel) {
+        return null
+    }
+
+    const label = getClaudeModelLabel(trimmedModel)
+    if (!label) {
+        return trimmedModel
+    }
+
+    return options?.includeValue ? getModelDisplayLabel(trimmedModel, label) : label
+}
+
 export function isCodexModelPreset(model: string | null | undefined): model is CodexModelPreset {
     return typeof model === 'string' && Object.hasOwn(CODEX_MODEL_LABELS, model)
 }

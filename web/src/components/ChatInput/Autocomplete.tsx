@@ -24,7 +24,7 @@ function SourceBadge({ source, isSelected }: { source?: string; isSelected: bool
 
 /**
  * Autocomplete suggestions list component.
- * Groups slash-command suggestions by source (built-in vs custom).
+ * Groups slash-command suggestions by source.
  */
 export const Autocomplete = memo(function Autocomplete(props: AutocompleteProps) {
     const { suggestions, selectedIndex, onSelect } = props
@@ -41,20 +41,23 @@ export const Autocomplete = memo(function Autocomplete(props: AutocompleteProps)
         selectedEl?.scrollIntoView({ block: 'nearest' })
     }, [selectedIndex, suggestions])
 
-    // Group slash-command suggestions by built-in vs custom.
+    // Group slash-command suggestions by source.
     // Non-slash suggestions (e.g. @-mentions) pass through ungrouped.
     const groups = useMemo(() => {
         const isSlash = suggestions.length > 0 && suggestions[0].text.startsWith('/')
         if (!isSlash) return [{ label: null, items: suggestions }]
 
+        const runtime: Suggestion[] = []
         const builtin: Suggestion[] = []
         const custom: Suggestion[] = []
         for (const s of suggestions) {
-            if (s.source === 'builtin' || s.source === 'runtime') builtin.push(s)
+            if (s.source === 'runtime') runtime.push(s)
+            else if (s.source === 'builtin') builtin.push(s)
             else custom.push(s)
         }
 
         const result: { label: string | null; items: readonly Suggestion[] }[] = []
+        if (runtime.length > 0) result.push({ label: t('composer.slashCommands.runtime'), items: runtime })
         if (builtin.length > 0) result.push({ label: t('composer.slashCommands.builtin'), items: builtin })
         if (custom.length > 0) result.push({ label: t('composer.slashCommands.custom'), items: custom })
         // If all items are one source, skip the header

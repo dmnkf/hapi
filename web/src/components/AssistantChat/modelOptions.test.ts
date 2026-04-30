@@ -37,8 +37,8 @@ describe('getModelOptionsForFlavor', () => {
         })
         expect(options).toEqual([
             { value: null, label: 'Auto' },
-            { value: 'runtime-fast', label: 'Runtime Fast' },
-            { value: 'runtime-deep', label: 'Runtime Deep' }
+            { value: 'runtime-fast', label: 'Runtime Fast (runtime-fast)' },
+            { value: 'runtime-deep', label: 'Runtime Deep (runtime-deep)' }
         ])
     })
 
@@ -51,8 +51,8 @@ describe('getModelOptionsForFlavor', () => {
             source: 'dynamic'
         })
         expect(options).toEqual([
-            { value: 'gpt-runtime-fast', label: 'Runtime Fast' },
-            { value: 'gpt-runtime-deep', label: 'Runtime Deep' }
+            { value: 'gpt-runtime-fast', label: 'Runtime Fast (gpt-runtime-fast)' },
+            { value: 'gpt-runtime-deep', label: 'Runtime Deep (gpt-runtime-deep)' }
         ])
     })
 

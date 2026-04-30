@@ -271,6 +271,7 @@ export default {
   'composer.codexSlashUnsupported.title': 'Codex command unavailable',
   'composer.codexSlashUnsupported.body': 'HAPI remote mode does not yet run built-in Codex slash commands like {command}. Use natural language instead, or run it in the local Codex TUI.',
   'composer.slashCommands': 'Commands',
+  'composer.slashCommands.runtime': 'Runtime',
   'composer.slashCommands.builtin': 'Built-in',
   'composer.slashCommands.custom': 'Custom',
 

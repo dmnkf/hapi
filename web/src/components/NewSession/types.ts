@@ -1,13 +1,14 @@
 import {
     CLAUDE_EFFORT_LABELS,
     CLAUDE_EFFORT_PRESETS,
-    CLAUDE_MODEL_LABELS,
     CODEX_MODEL_LABELS,
     CODEX_MODEL_PRESETS,
     CODEX_REASONING_EFFORTS,
     CODEX_REASONING_EFFORT_LABELS,
     GEMINI_MODEL_LABELS,
     GEMINI_MODEL_PRESETS,
+    getClaudeModelDisplayLabel,
+    getModelDisplayLabel,
 } from '@hapi/protocol'
 
 export type AgentType = 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
@@ -23,16 +24,16 @@ const CLAUDE_DISPLAY_ORDER = ['opus', 'opus[1m]', 'sonnet', 'sonnet[1m]'] as con
 export const MODEL_OPTIONS: Record<AgentType, { value: string; label: string }[]> = {
     claude: [
         { value: 'auto', label: 'Default' },
-        ...CLAUDE_DISPLAY_ORDER.map(m => ({ value: m, label: CLAUDE_MODEL_LABELS[m] })),
+        ...CLAUDE_DISPLAY_ORDER.map(m => ({ value: m, label: getClaudeModelDisplayLabel(m, { includeValue: true }) ?? m })),
     ],
     codex: [
         { value: 'auto', label: 'Default' },
-        ...CODEX_MODEL_PRESETS.map(m => ({ value: m, label: CODEX_MODEL_LABELS[m] })),
+        ...CODEX_MODEL_PRESETS.map(m => ({ value: m, label: getModelDisplayLabel(m, CODEX_MODEL_LABELS[m]) ?? m })),
     ],
     cursor: [],
     gemini: [
         { value: 'auto', label: 'Default' },
-        ...GEMINI_MODEL_PRESETS.map(m => ({ value: m, label: GEMINI_MODEL_LABELS[m] })),
+        ...GEMINI_MODEL_PRESETS.map(m => ({ value: m, label: getModelDisplayLabel(m, GEMINI_MODEL_LABELS[m]) ?? m })),
     ],
     opencode: [],
 }
