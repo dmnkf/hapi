@@ -20,7 +20,7 @@ import { buildConversationOutline, getConversationMessageAnchorId, type Conversa
 import { buildSessionActivity, getActivityQueueCount } from '@/chat/activity'
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
-import { ActivitySheet } from '@/components/AssistantChat/ActivitySheet'
+import { ActivityPanel, ActivitySheet } from '@/components/AssistantChat/ActivitySheet'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
 import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { findUnsupportedCodexBuiltinSlashCommand } from '@/lib/codexSlashCommands'
@@ -68,11 +68,15 @@ export function SessionChat(props: {
     onRetryMessage?: (localId: string) => void
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
     availableSlashCommands?: readonly SlashCommand[]
+    view?: 'activity' | 'chat'
+    onViewActivity?: () => void
+    onViewChat?: () => void
 }) {
     const { haptic } = usePlatform()
     const { addToast } = useToast()
     const { t } = useTranslation()
     const navigate = useNavigate()
+    const view = props.view ?? 'chat'
     const sessionInactive = !props.session.active
     const terminalSupported = isRemoteTerminalSupported(props.session.metadata)
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
@@ -284,17 +288,21 @@ export function SessionChat(props: {
         const target = document.getElementById(getConversationMessageAnchorId(item.targetMessageId))
         if (target) {
             target.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        } else {
+            props.onViewChat?.()
         }
         setActivityOpen(false)
-    }, [])
+    }, [props.onViewChat])
 
     const handleActivityToolJump = useCallback((targetToolId: string) => {
         const target = document.getElementById(getConversationMessageAnchorId(`tool:${targetToolId}`))
         if (target) {
             target.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        } else {
+            props.onViewChat?.()
         }
         setActivityOpen(false)
-    }, [])
+    }, [props.onViewChat])
 
     // Permission mode change handler
     const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
@@ -425,8 +433,8 @@ export function SessionChat(props: {
                 onBack={props.onBack}
                 onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
                 onViewTerminal={props.session.active && terminalSupported ? handleViewTerminal : undefined}
-                onOpenActivity={() => setActivityOpen(true)}
-                activityCount={activityCount}
+                onOpenActivity={view === 'activity' ? undefined : (props.onViewActivity ?? (() => setActivityOpen(true)))}
+                activityCount={view === 'activity' ? undefined : activityCount}
                 api={props.api}
                 onSessionDeleted={props.onBack}
             />
@@ -444,31 +452,54 @@ export function SessionChat(props: {
 
             <AssistantRuntimeProvider runtime={runtime}>
                 <div className="relative flex min-h-0 flex-1 flex-col">
-                    <HappyThread
-                        key={props.session.id}
-                        api={props.api}
-                        sessionId={props.session.id}
-                        metadata={props.session.metadata}
-                        disabled={sessionInactive}
-                        onRefresh={props.onRefresh}
-                        onRetryMessage={props.onRetryMessage}
-                        onFlushPending={props.onFlushPending}
-                        onAtBottomChange={props.onAtBottomChange}
-                        isLoadingMessages={props.isLoadingMessages}
-                        messagesWarning={props.messagesWarning}
-                        hasMoreMessages={props.hasMoreMessages}
-                        isLoadingMoreMessages={props.isLoadingMoreMessages}
-                        onLoadMore={props.onLoadMore}
-                        pendingCount={props.pendingCount}
-                        rawMessagesCount={props.messages.length}
-                        normalizedMessagesCount={normalizedMessages.length}
-                        messagesVersion={props.messagesVersion}
-                        forceScrollToken={forceScrollToken}
-                        outlineOpen={outlineOpen}
-                        outlineTitle={outlineTitle}
-                        outlineItems={outlineItems}
-                        onOutlineOpenChange={setOutlineOpen}
-                    />
+                    {view === 'activity' ? (
+                        <ActivityPanel
+                            api={props.api}
+                            sessionId={props.session.id}
+                            metadata={props.session.metadata}
+                            disabled={sessionInactive}
+                            activity={activity}
+                            backgroundTaskCount={props.session.backgroundTaskCount}
+                            outlineTitle={outlineTitle}
+                            outlineItems={outlineItems}
+                            hasMoreMessages={props.hasMoreMessages}
+                            isLoadingMoreMessages={props.isLoadingMoreMessages}
+                            onLoadMore={() => {
+                                void props.onLoadMore()
+                            }}
+                            onSelectOutline={handleActivityOutlineSelect}
+                            onJumpToTool={handleActivityToolJump}
+                            onRefresh={props.onRefresh}
+                            onClose={() => setActivityOpen(false)}
+                            onOpenChat={props.onViewChat}
+                        />
+                    ) : (
+                        <HappyThread
+                            key={props.session.id}
+                            api={props.api}
+                            sessionId={props.session.id}
+                            metadata={props.session.metadata}
+                            disabled={sessionInactive}
+                            onRefresh={props.onRefresh}
+                            onRetryMessage={props.onRetryMessage}
+                            onFlushPending={props.onFlushPending}
+                            onAtBottomChange={props.onAtBottomChange}
+                            isLoadingMessages={props.isLoadingMessages}
+                            messagesWarning={props.messagesWarning}
+                            hasMoreMessages={props.hasMoreMessages}
+                            isLoadingMoreMessages={props.isLoadingMoreMessages}
+                            onLoadMore={props.onLoadMore}
+                            pendingCount={props.pendingCount}
+                            rawMessagesCount={props.messages.length}
+                            normalizedMessagesCount={normalizedMessages.length}
+                            messagesVersion={props.messagesVersion}
+                            forceScrollToken={forceScrollToken}
+                            outlineOpen={outlineOpen}
+                            outlineTitle={outlineTitle}
+                            outlineItems={outlineItems}
+                            onOutlineOpenChange={setOutlineOpen}
+                        />
+                    )}
 
                     <ActivitySheet
                         open={activityOpen}

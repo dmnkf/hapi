@@ -155,8 +155,7 @@ function FileRow(props: { item: ActivityFileItem; onJump: (targetToolId: string)
     )
 }
 
-export function ActivitySheet(props: {
-    open: boolean
+type ActivityContentProps = {
     api: ApiClient
     sessionId: string
     metadata: SessionMetadataSummary | null
@@ -172,10 +171,12 @@ export function ActivitySheet(props: {
     onJumpToTool: (targetToolId: string) => void
     onRefresh: () => void
     onClose: () => void
-}) {
-    const { t } = useTranslation()
+    onOpenChat?: () => void
+    showClose: boolean
+}
 
-    if (!props.open) return null
+function ActivityContent(props: ActivityContentProps) {
+    const { t } = useTranslation()
 
     const hasWork = props.activity.approvals.length > 0
         || props.activity.runningTools.length > 0
@@ -186,21 +187,21 @@ export function ActivitySheet(props: {
 
     return (
         <>
-            <button
-                type="button"
-                className="absolute inset-0 z-30 bg-black/25"
-                aria-label={t('session.activity.close')}
-                onClick={props.onClose}
-            />
-            <aside
-                className="absolute inset-x-0 bottom-0 z-40 mx-auto flex max-h-[86%] w-full max-w-content flex-col overflow-hidden rounded-t-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-2xl sm:inset-y-3 sm:right-3 sm:left-auto sm:max-h-none sm:w-[24rem] sm:rounded-xl"
-                aria-label={t('session.activity.title')}
-            >
-                <div className="flex items-start gap-3 border-b border-[var(--app-border)] p-3">
-                    <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold">{t('session.activity.title')}</div>
-                        <div className="mt-0.5 truncate text-xs text-[var(--app-hint)]">{props.outlineTitle}</div>
-                    </div>
+            <div className="flex items-start gap-3 border-b border-[var(--app-border)] p-3">
+                <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold">{t('session.activity.title')}</div>
+                    <div className="mt-0.5 truncate text-xs text-[var(--app-hint)]">{props.outlineTitle}</div>
+                </div>
+                {props.onOpenChat ? (
+                    <button
+                        type="button"
+                        onClick={props.onOpenChat}
+                        className="rounded-md border border-[var(--app-border)] px-2.5 py-1.5 text-xs font-medium text-[var(--app-fg)] transition-colors hover:bg-[var(--app-subtle-bg)]"
+                    >
+                        {t('session.tab.chat')}
+                    </button>
+                ) : null}
+                {props.showClose ? (
                     <button
                         type="button"
                         onClick={props.onClose}
@@ -210,35 +211,36 @@ export function ActivitySheet(props: {
                     >
                         <CloseIcon className="h-4 w-4" />
                     </button>
-                </div>
+                ) : null}
+            </div>
 
-                <div className="app-scroll-y min-h-0 flex-1">
-                    {!hasWork ? (
-                        <div className="p-3">
-                            <EmptySection text={t('session.activity.empty')} />
+            <div className="app-scroll-y min-h-0 flex-1">
+                {!hasWork ? (
+                    <div className="p-3">
+                        <EmptySection text={t('session.activity.empty')} />
+                    </div>
+                ) : null}
+
+                <Section title={t('session.activity.approvals')} count={props.activity.approvals.length}>
+                    {props.activity.approvals.length === 0 ? (
+                        <EmptySection text={t('session.activity.noApprovals')} />
+                    ) : (
+                        <div className="space-y-2">
+                            {props.activity.approvals.map((item) => (
+                                <ApprovalRow
+                                    key={item.id}
+                                    api={props.api}
+                                    sessionId={props.sessionId}
+                                    metadata={props.metadata}
+                                    item={item}
+                                    disabled={props.disabled}
+                                    onDone={props.onRefresh}
+                                    onJump={props.onJumpToTool}
+                                />
+                            ))}
                         </div>
-                    ) : null}
-
-                    <Section title={t('session.activity.approvals')} count={props.activity.approvals.length}>
-                        {props.activity.approvals.length === 0 ? (
-                            <EmptySection text={t('session.activity.noApprovals')} />
-                        ) : (
-                            <div className="space-y-2">
-                                {props.activity.approvals.map((item) => (
-                                    <ApprovalRow
-                                        key={item.id}
-                                        api={props.api}
-                                        sessionId={props.sessionId}
-                                        metadata={props.metadata}
-                                        item={item}
-                                        disabled={props.disabled}
-                                        onDone={props.onRefresh}
-                                        onJump={props.onJumpToTool}
-                                    />
-                                ))}
-                            </div>
-                        )}
-                    </Section>
+                    )}
+                </Section>
 
                     <Section title={t('session.activity.active')} count={props.activity.runningTools.length + (props.backgroundTaskCount ?? 0)}>
                         {props.activity.runningTools.length === 0 && !props.backgroundTaskCount ? (
@@ -282,48 +284,78 @@ export function ActivitySheet(props: {
                         )}
                     </Section>
 
-                    <Section title={t('session.activity.conversation')} count={props.outlineItems.length}>
-                        {props.hasMoreMessages ? (
-                            <div className="mb-2">
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={props.onLoadMore}
-                                    disabled={props.isLoadingMoreMessages}
-                                    aria-busy={props.isLoadingMoreMessages}
-                                    className="w-full gap-1.5 text-xs"
-                                >
-                                    {props.isLoadingMoreMessages ? (
-                                        <>
-                                            <Spinner size="sm" label={null} className="text-current" />
-                                            {t('misc.loading')}
-                                        </>
-                                    ) : (
-                                        <>
-                                            <span aria-hidden="true">↑</span>
-                                            {t('session.outline.loadOlder')}
-                                        </>
-                                    )}
-                                </Button>
-                            </div>
-                        ) : null}
+                <Section title={t('session.activity.conversation')} count={props.outlineItems.length}>
+                    {props.hasMoreMessages ? (
+                        <div className="mb-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={props.onLoadMore}
+                                disabled={props.isLoadingMoreMessages}
+                                aria-busy={props.isLoadingMoreMessages}
+                                className="w-full gap-1.5 text-xs"
+                            >
+                                {props.isLoadingMoreMessages ? (
+                                    <>
+                                        <Spinner size="sm" label={null} className="text-current" />
+                                        {t('misc.loading')}
+                                    </>
+                                ) : (
+                                    <>
+                                        <span aria-hidden="true">↑</span>
+                                        {t('session.outline.loadOlder')}
+                                    </>
+                                )}
+                            </Button>
+                        </div>
+                    ) : null}
 
-                        {props.outlineItems.length === 0 ? (
-                            <EmptySection text={t('session.outline.empty')} />
-                        ) : (
-                            <div className="space-y-2">
-                                {props.outlineItems.map((item) => (
-                                    <RowButton
-                                        key={item.id}
-                                        title={item.label}
-                                        meta={t('session.outline.kind.user')}
-                                        onClick={() => props.onSelectOutline(item)}
-                                    />
-                                ))}
-                            </div>
-                        )}
-                    </Section>
-                </div>
+                    {props.outlineItems.length === 0 ? (
+                        <EmptySection text={t('session.outline.empty')} />
+                    ) : (
+                        <div className="space-y-2">
+                            {props.outlineItems.map((item) => (
+                                <RowButton
+                                    key={item.id}
+                                    title={item.label}
+                                    meta={t('session.outline.kind.user')}
+                                    onClick={() => props.onSelectOutline(item)}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </Section>
+            </div>
+        </>
+    )
+}
+
+export function ActivityPanel(props: Omit<ActivityContentProps, 'showClose'>) {
+    return (
+        <div className="flex h-full min-h-0 flex-col bg-[var(--app-bg)]">
+            <ActivityContent {...props} showClose={false} />
+        </div>
+    )
+}
+
+export function ActivitySheet(props: Omit<ActivityContentProps, 'showClose'> & { open: boolean }) {
+    const { t } = useTranslation()
+
+    if (!props.open) return null
+
+    return (
+        <>
+            <button
+                type="button"
+                className="absolute inset-0 z-30 bg-black/25"
+                aria-label={t('session.activity.close')}
+                onClick={props.onClose}
+            />
+            <aside
+                className="absolute inset-x-0 bottom-0 z-40 mx-auto flex max-h-[86%] w-full max-w-content flex-col overflow-hidden rounded-t-xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-2xl sm:inset-y-3 sm:right-3 sm:left-auto sm:max-h-none sm:w-[24rem] sm:rounded-xl"
+                aria-label={t('session.activity.title')}
+            >
+                <ActivityContent {...props} showClose />
             </aside>
         </>
     )
