@@ -54,6 +54,36 @@ function getDefaultBrowsePath(machine: Machine | null): string {
     return machine?.metadata?.platform === 'win32' ? 'C:\\' : '/'
 }
 
+function normalizeTimestampMs(value: number): number {
+    return value < 1_000_000_000_000 ? value * 1000 : value
+}
+
+function formatNativeSessionTimestamp(value: number): string {
+    const ms = normalizeTimestampMs(value)
+    if (!Number.isFinite(ms)) {
+        return 'unknown'
+    }
+
+    return new Date(ms).toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    })
+}
+
+function formatNativeSessionDetails(session: NativeAttachSession): string {
+    const parts = [
+        `Updated ${formatNativeSessionTimestamp(session.updatedAt)}`,
+        `Created ${formatNativeSessionTimestamp(session.createdAt)}`,
+        `${session.messageCount} msg${session.messageCount === 1 ? '' : 's'}`
+    ]
+    if (session.model) {
+        parts.push(session.model)
+    }
+    return parts.join(' · ')
+}
+
 function getPathSeparator(machine: Machine | null, path: string): '/' | '\\' {
     if (path.includes('\\')) return '\\'
     if (machine?.metadata?.platform === 'win32') return '\\'
@@ -497,10 +527,12 @@ export function NewSession(props: {
                 setNativeAttachSessions([])
                 return
             }
-            setNativeAttachSessions((result.sessions ?? []).map((session) => ({
-                ...session,
-                agent
-            } as NativeAttachSession)))
+            setNativeAttachSessions((result.sessions ?? [])
+                .map((session) => ({
+                    ...session,
+                    agent
+                } as NativeAttachSession))
+                .sort((a, b) => b.updatedAt - a.updatedAt))
         } catch (error) {
             setNativeAttachError(error instanceof Error ? error.message : `Failed to list ${agent === 'claude' ? 'Claude' : 'Codex'} CLI sessions`)
             setNativeAttachSessions([])
@@ -634,7 +666,7 @@ export function NewSession(props: {
                                 {agent === 'claude' ? 'Claude Code sessions' : 'Codex CLI sessions'}
                             </div>
                             <div className="text-xs text-[var(--app-hint)]">
-                                Attach a native {agent === 'claude' ? 'Claude Code' : 'Codex'} transcript from this machine.
+                                Attach a native {agent === 'claude' ? 'Claude Code' : 'Codex'} transcript. Most recently updated first.
                             </div>
                         </div>
                         <button
@@ -669,6 +701,9 @@ export function NewSession(props: {
                                         >
                                             <span className="min-w-0">
                                                 <span className="block truncate text-xs font-medium text-[var(--app-fg)]">{session.title}</span>
+                                                <span className="block truncate text-[11px] text-[var(--app-hint)]">
+                                                    {formatNativeSessionDetails(session)}
+                                                </span>
                                                 <span className="block truncate text-xs text-[var(--app-hint)]">
                                                     {session.cwd ?? session.transcriptPath}
                                                 </span>

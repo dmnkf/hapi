@@ -17,6 +17,7 @@ export type NativeClaudeSessionSummary = {
     transcriptPath: string;
     cwd: string | null;
     title: string;
+    createdAt: number;
     updatedAt: number;
     messageCount: number;
     userMessageCount: number;
@@ -174,6 +175,7 @@ async function parseTranscript(filePath: string): Promise<ParsedTranscript | nul
     let cwd: string | null = null;
     let model: string | undefined;
     let title: string | null = null;
+    let firstTimestamp: number | null = null;
     let lastTimestamp: number | null = null;
     let messageCount = 0;
     let userMessageCount = 0;
@@ -205,7 +207,9 @@ async function parseTranscript(filePath: string): Promise<ParsedTranscript | nul
         claudeSessionId = event.sessionId ?? claudeSessionId;
         cwd = cwd ?? event.cwd ?? null;
         model = model ?? modelFromRawEvent(raw);
-        lastTimestamp = parseTimestamp(event.timestamp) ?? lastTimestamp;
+        const timestamp = parseTimestamp(event.timestamp);
+        firstTimestamp = firstTimestamp ?? timestamp;
+        lastTimestamp = timestamp ?? lastTimestamp;
 
         if (event.type === 'summary' || event.isMeta || event.isCompactSummary || !isClaudeChatVisibleMessage(event)) {
             events.push({ event, lineIndex: index });
@@ -233,12 +237,14 @@ async function parseTranscript(filePath: string): Promise<ParsedTranscript | nul
 
     const fileStat = await stat(filePath).catch(() => null);
     const updatedAt = lastTimestamp ?? fileStat?.mtimeMs ?? Date.now();
+    const createdAt = firstTimestamp ?? fileStat?.birthtimeMs ?? updatedAt;
 
     return {
         claudeSessionId,
         transcriptPath: filePath,
         cwd,
         title: title ?? basename(filePath, '.jsonl'),
+        createdAt,
         updatedAt,
         messageCount,
         userMessageCount,

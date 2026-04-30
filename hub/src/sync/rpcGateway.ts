@@ -63,6 +63,7 @@ export type RpcNativeCodexSession = {
     transcriptPath: string
     cwd: string | null
     title: string
+    createdAt: number
     updatedAt: number
     messageCount: number
     userMessageCount: number
@@ -75,6 +76,7 @@ export type RpcNativeClaudeSession = {
     transcriptPath: string
     cwd: string | null
     title: string
+    createdAt: number
     updatedAt: number
     messageCount: number
     userMessageCount: number

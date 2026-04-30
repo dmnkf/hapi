@@ -16,6 +16,7 @@ export type NativeCodexSessionSummary = {
     transcriptPath: string;
     cwd: string | null;
     title: string;
+    createdAt: number;
     updatedAt: number;
     messageCount: number;
     userMessageCount: number;
@@ -140,6 +141,7 @@ async function parseTranscript(filePath: string): Promise<ParsedTranscript | nul
     let cwd: string | null = null;
     let model: string | undefined;
     let title: string | null = null;
+    let firstTimestamp: number | null = null;
     let lastTimestamp: number | null = null;
     let messageCount = 0;
     let userMessageCount = 0;
@@ -160,6 +162,7 @@ async function parseTranscript(filePath: string): Promise<ParsedTranscript | nul
         codexSessionId = codexSessionId ?? metadata.sessionId ?? null;
         cwd = cwd ?? metadata.cwd ?? null;
         model = model ?? metadata.model;
+        firstTimestamp = firstTimestamp ?? metadata.timestamp ?? null;
         lastTimestamp = metadata.timestamp ?? lastTimestamp;
 
         const converted = convertCodexEvent(event);
@@ -183,12 +186,14 @@ async function parseTranscript(filePath: string): Promise<ParsedTranscript | nul
 
     const fileStat = await stat(filePath).catch(() => null);
     const updatedAt = lastTimestamp ?? fileStat?.mtimeMs ?? Date.now();
+    const createdAt = firstTimestamp ?? fileStat?.birthtimeMs ?? updatedAt;
 
     return {
         codexSessionId,
         transcriptPath: filePath,
         cwd,
         title: title ?? basename(filePath, '.jsonl'),
+        createdAt,
         updatedAt,
         messageCount,
         userMessageCount,

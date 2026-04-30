@@ -45,6 +45,7 @@ describe('native Codex sessions', () => {
                 transcriptPath,
                 cwd: '/repo',
                 title: 'hello codex',
+                createdAt: Date.parse('2026-04-30T10:00:00.000Z'),
                 updatedAt: Date.parse('2026-04-30T10:02:00.000Z'),
                 messageCount: 2,
                 userMessageCount: 1,
