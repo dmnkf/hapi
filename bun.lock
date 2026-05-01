@@ -12,7 +12,7 @@
     },
     "cli": {
       "name": "@dmnkf/hapi",
-      "version": "0.17.2-dmnkf.16",
+      "version": "0.17.2-dmnkf.17",
       "bin": {
         "hapi": "bin/hapi.cjs",
       },
@@ -43,11 +43,11 @@
         "vitest": "^4.0.16",
       },
       "optionalDependencies": {
-        "@dmnkf/hapi-darwin-arm64": "0.17.2-dmnkf.16",
-        "@dmnkf/hapi-darwin-x64": "0.17.2-dmnkf.16",
-        "@dmnkf/hapi-linux-arm64": "0.17.2-dmnkf.16",
-        "@dmnkf/hapi-linux-x64": "0.17.2-dmnkf.16",
-        "@dmnkf/hapi-win32-x64": "0.17.2-dmnkf.16",
+        "@dmnkf/hapi-darwin-arm64": "0.17.2-dmnkf.17",
+        "@dmnkf/hapi-darwin-x64": "0.17.2-dmnkf.17",
+        "@dmnkf/hapi-linux-arm64": "0.17.2-dmnkf.17",
+        "@dmnkf/hapi-linux-x64": "0.17.2-dmnkf.17",
+        "@dmnkf/hapi-win32-x64": "0.17.2-dmnkf.17",
       },
     },
     "docs": {
