@@ -10,6 +10,10 @@ import type {
     ThreadStartResponse,
     ThreadResumeParams,
     ThreadResumeResponse,
+    ThreadCompactStartParams,
+    ThreadCompactStartResponse,
+    ReviewStartParams,
+    ReviewStartResponse,
     TurnStartParams,
     TurnStartResponse,
     TurnInterruptParams,
@@ -164,6 +168,25 @@ export class CodexAppServerClient {
             timeoutMs: CodexAppServerClient.DEFAULT_TIMEOUT_MS
         });
         return response as TurnStartResponse;
+    }
+
+    async compactThread(
+        params: ThreadCompactStartParams,
+        options?: { signal?: AbortSignal }
+    ): Promise<ThreadCompactStartResponse> {
+        const response = await this.sendRequest('thread/compact/start', params, {
+            signal: options?.signal,
+            timeoutMs: CodexAppServerClient.DEFAULT_TIMEOUT_MS
+        });
+        return response as ThreadCompactStartResponse;
+    }
+
+    async startReview(params: ReviewStartParams, options?: { signal?: AbortSignal }): Promise<ReviewStartResponse> {
+        const response = await this.sendRequest('review/start', params, {
+            signal: options?.signal,
+            timeoutMs: CodexAppServerClient.DEFAULT_TIMEOUT_MS
+        });
+        return response as ReviewStartResponse;
     }
 
     async interruptTurn(params: TurnInterruptParams): Promise<TurnInterruptResponse> {

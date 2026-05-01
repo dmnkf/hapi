@@ -9,6 +9,8 @@ const harness = vi.hoisted(() => ({
     startThreadIds: [] as string[],
     resumeThreadIds: [] as string[],
     startTurnThreadIds: [] as string[],
+    compactThreadIds: [] as string[],
+    reviewCalls: [] as Array<{ threadId: string; delivery?: string; target?: unknown }>,
     remainingThreadSystemErrors: 0
 }));
 
@@ -66,6 +68,40 @@ vi.mock('./codexAppServerClient', () => {
             harness.notifications.push({ method: 'turn/completed', params: completed });
             this.notificationHandler?.('turn/completed', completed);
 
+            return { turn: { id: turnId } };
+        }
+
+        async compactThread(params?: { threadId?: string }): Promise<Record<string, never>> {
+            const threadId = params?.threadId ?? 'thread-unknown';
+            harness.compactThreadIds.push(threadId);
+            const turnId = `compact-${harness.compactThreadIds.length}`;
+            const started = { turn: { id: turnId } };
+            harness.notifications.push({ method: 'turn/started', params: started });
+            this.notificationHandler?.('turn/started', started);
+            const completed = { status: 'Completed', turn: { id: turnId } };
+            harness.notifications.push({ method: 'turn/completed', params: completed });
+            this.notificationHandler?.('turn/completed', completed);
+            return {};
+        }
+
+        async startReview(params?: {
+            threadId?: string;
+            delivery?: string;
+            target?: unknown;
+        }): Promise<{ turn: { id?: string } }> {
+            const threadId = params?.threadId ?? 'thread-unknown';
+            harness.reviewCalls.push({
+                threadId,
+                delivery: params?.delivery,
+                target: params?.target
+            });
+            const turnId = `review-${harness.reviewCalls.length}`;
+            const started = { turn: { id: turnId } };
+            harness.notifications.push({ method: 'turn/started', params: started });
+            this.notificationHandler?.('turn/started', started);
+            const completed = { status: 'Completed', turn: { id: turnId } };
+            harness.notifications.push({ method: 'turn/completed', params: completed });
+            this.notificationHandler?.('turn/completed', completed);
             return { turn: { id: turnId } };
         }
 
@@ -210,6 +246,8 @@ describe('codexRemoteLauncher', () => {
         harness.startThreadIds = [];
         harness.resumeThreadIds = [];
         harness.startTurnThreadIds = [];
+        harness.compactThreadIds = [];
+        harness.reviewCalls = [];
         harness.remainingThreadSystemErrors = 0;
     });
 
@@ -269,6 +307,45 @@ describe('codexRemoteLauncher', () => {
         expect(harness.resumeThreadIds).toEqual([]);
         expect(harness.startTurnThreadIds).toEqual(['thread-1', 'thread-2']);
         expect(session.sessionId).toBe('thread-2');
+        expect(session.thinking).toBe(false);
+    });
+
+    it('routes /compact to app-server thread compaction instead of a prompt turn', async () => {
+        const { session } = createSessionStub(['/compact']);
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(harness.startThreadIds).toEqual(['thread-1']);
+        expect(harness.compactThreadIds).toEqual(['thread-1']);
+        expect(harness.startTurnThreadIds).toEqual([]);
+        expect(session.thinking).toBe(false);
+    });
+
+    it('routes /review to app-server review mode', async () => {
+        const { session } = createSessionStub(['/review check the auth diff']);
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(harness.reviewCalls).toEqual([{
+            threadId: 'thread-1',
+            delivery: 'inline',
+            target: { type: 'custom', instructions: 'check the auth diff' }
+        }]);
+        expect(harness.startTurnThreadIds).toEqual([]);
+        expect(session.thinking).toBe(false);
+    });
+
+    it('resets Codex app-server context for /clear before the next prompt', async () => {
+        const { session } = createSessionStub(['/clear', 'after reset']);
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(harness.startThreadIds).toEqual(['thread-1']);
+        expect(harness.startTurnThreadIds).toEqual(['thread-1']);
+        expect(session.sessionId).toBe('thread-1');
         expect(session.thinking).toBe(false);
     });
 });

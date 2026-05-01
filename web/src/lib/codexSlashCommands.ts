@@ -11,9 +11,23 @@ const BUILTIN_COMMANDS: Record<string, SlashCommand[]> = {
         { name: 'stats', description: 'Show your Claude Code usage statistics and activity', source: 'builtin' },
         { name: 'status', description: 'Show Claude Code status including version, model, account, and API connectivity', source: 'builtin' },
     ],
-    // Codex remote turns send slash-prefixed input as plain text to app-server.
-    // Hide built-ins here until remote slash command execution is implemented end-to-end.
-    codex: [],
+    codex: [
+        { name: 'review', description: 'Run Codex code review mode', source: 'builtin' },
+        { name: 'r', description: 'Alias for /review', source: 'builtin' },
+        { name: 'compact', description: 'Compact conversation history into a summary', source: 'builtin' },
+        { name: 'use', description: 'Load a Codex skill for the current task', source: 'builtin' },
+        { name: 'apps', description: 'List available and connected app connectors', source: 'builtin' },
+        { name: 'clear', description: 'Clear conversation history while keeping configuration', source: 'builtin' },
+        { name: 'c', description: 'Alias for /clear', source: 'builtin' },
+        { name: 'reset', description: 'Reset conversation history and session state', source: 'builtin' },
+        { name: 'model', description: 'Switch Codex model for the current session', source: 'builtin' },
+        { name: 'approval', description: 'Change Codex approval mode for the current session', source: 'builtin' },
+        { name: 'sandbox', description: 'Change Codex sandbox mode for the current session', source: 'builtin' },
+        { name: 'help', description: 'Show Codex help and available commands', source: 'builtin' },
+        { name: 'h', description: 'Alias for /help', source: 'builtin' },
+        { name: 'status', description: 'Show Codex session status and current configuration', source: 'builtin' },
+        { name: 's', description: 'Alias for /status', source: 'builtin' },
+    ],
     gemini: [
         { name: 'about', description: 'Show version info', source: 'builtin' },
         { name: 'clear', description: 'Clear the screen and conversation history', source: 'builtin' },
@@ -23,36 +37,6 @@ const BUILTIN_COMMANDS: Record<string, SlashCommand[]> = {
     opencode: [],
 }
 
-const UNSUPPORTED_CODEX_BUILTIN_COMMANDS = new Set([
-    'review',
-    'new',
-    'compat',
-    'undo',
-    'diff',
-    'status',
-])
-
 export function getBuiltinSlashCommands(agentType: string): SlashCommand[] {
     return BUILTIN_COMMANDS[agentType] ?? BUILTIN_COMMANDS.claude ?? []
-}
-
-export function findUnsupportedCodexBuiltinSlashCommand(
-    text: string,
-    availableCommands: readonly SlashCommand[]
-): string | null {
-    const match = /^\s*\/([a-z0-9:_-]+)(?:\s|$)/i.exec(text)
-    if (!match) {
-        return null
-    }
-
-    const commandName = match[1]?.toLowerCase()
-    if (!commandName || !UNSUPPORTED_CODEX_BUILTIN_COMMANDS.has(commandName)) {
-        return null
-    }
-
-    const hasCustomCommand = availableCommands.some(
-        command => command.source !== 'builtin' && command.name.toLowerCase() === commandName
-    )
-
-    return hasCustomCommand ? null : commandName
 }

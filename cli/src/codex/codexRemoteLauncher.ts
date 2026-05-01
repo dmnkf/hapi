@@ -15,6 +15,7 @@ import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { AppServerEventConverter } from './utils/appServerEventConverter';
 import { registerAppServerPermissionHandlers } from './utils/appServerPermissionAdapter';
 import { buildThreadStartParams, buildTurnStartParams } from './utils/appServerConfig';
+import { parseCodexAppServerSlashCommand } from './utils/appServerSlashCommands';
 import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
 import { codexAcpRemoteLauncher } from './codexAcpRemoteLauncher';
 import { describeCodexAcpSource, resolveCodexRemoteBackend } from './utils/codexBackendSelection';
@@ -647,6 +648,17 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             messageBuffer.addMessage(message.message, 'user');
 
             try {
+                const appServerSlashCommand = parseCodexAppServerSlashCommand(message.message);
+                if (appServerSlashCommand?.type === 'clear' && !hasThread) {
+                    logger.debug('[Codex] /clear command detected before thread creation');
+                    this.currentThreadId = null;
+                    this.currentTurnId = null;
+                    invalidThreadId = null;
+                    session.sendSessionEvent({ type: 'message', message: 'Context was reset' });
+                    sendReady();
+                    continue;
+                }
+
                 if (!hasThread) {
                     const threadParams = buildThreadStartParams({
                         cwd: session.path,
@@ -705,6 +717,66 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         pending = message;
                         continue;
                     }
+                }
+
+                if (appServerSlashCommand) {
+                    if (appServerSlashCommand.type === 'clear') {
+                        logger.debug('[Codex] /clear command detected - starting a fresh app-server thread');
+                        const threadParams = buildThreadStartParams({
+                            cwd: session.path,
+                            mode: message.mode,
+                            mcpServers,
+                            cliOverrides: session.codexCliOverrides
+                        });
+                        const threadResponse = await appServerClient.startThread(threadParams, {
+                            signal: this.abortController.signal
+                        });
+                        const threadRecord = asRecord(threadResponse);
+                        const thread = threadRecord ? asRecord(threadRecord.thread) : null;
+                        const threadId = asString(thread?.id);
+                        applyResolvedModel(threadRecord?.model);
+                        if (!threadId) {
+                            throw new Error('app-server thread/start did not return thread.id after /clear');
+                        }
+                        this.currentThreadId = threadId;
+                        this.currentTurnId = null;
+                        invalidThreadId = null;
+                        hasThread = true;
+                        session.onSessionFound(threadId);
+                        session.sendSessionEvent({ type: 'message', message: 'Context was reset' });
+                        sendReady();
+                        continue;
+                    }
+
+                    turnInFlight = true;
+                    allowAnonymousTerminalEvent = false;
+                    if (appServerSlashCommand.type === 'compact') {
+                        logger.debug('[Codex] /compact command detected - invoking app-server compaction');
+                        await appServerClient.compactThread({
+                            threadId: this.currentThreadId
+                        }, {
+                            signal: this.abortController.signal
+                        });
+                        continue;
+                    }
+
+                    logger.debug('[Codex] /review command detected - invoking app-server review');
+                    const reviewResponse = await appServerClient.startReview({
+                        threadId: this.currentThreadId,
+                        delivery: 'inline',
+                        target: appServerSlashCommand.target
+                    }, {
+                        signal: this.abortController.signal
+                    });
+                    const reviewRecord = asRecord(reviewResponse);
+                    const turn = reviewRecord ? asRecord(reviewRecord.turn) : null;
+                    const turnId = asString(turn?.id);
+                    if (turnId) {
+                        this.currentTurnId = turnId;
+                    } else {
+                        allowAnonymousTerminalEvent = true;
+                    }
+                    continue;
                 }
 
                 const turnParams = buildTurnStartParams({

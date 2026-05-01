@@ -160,6 +160,33 @@ export interface TurnStartResponse {
     [key: string]: unknown;
 }
 
+export interface ThreadCompactStartParams {
+    threadId: string;
+}
+
+export interface ThreadCompactStartResponse {
+    [key: string]: unknown;
+}
+
+export interface ReviewStartParams {
+    threadId: string;
+    delivery?: 'inline' | 'detached';
+    target:
+        | { type: 'uncommittedChanges' }
+        | { type: 'baseBranch'; branch: string }
+        | { type: 'commit'; sha: string; title?: string }
+        | { type: 'custom'; instructions: string };
+}
+
+export interface ReviewStartResponse {
+    turn?: {
+        id?: string;
+        status?: string;
+    };
+    reviewThreadId?: string;
+    [key: string]: unknown;
+}
+
 export interface TurnInterruptParams {
     threadId: string;
     turnId: string;
