@@ -334,6 +334,7 @@ export default {
   'misc.loadingMessages': '加载消息中…',
   'misc.typeMessage': "输入 'continue' 继续...",
   'misc.typeAMessage': '输入消息...',
+  'misc.typeToResume': '输入以恢复会话…',
   'misc.offline': '离线',
   'misc.permissionRequired': '需要权限',
   'misc.percentLeft': '剩余 {percent}%',

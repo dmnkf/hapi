@@ -377,11 +377,25 @@ export function ComposerButtons(props: {
         return () => document.removeEventListener('pointerdown', onDocPointer, true)
     }, [overflowOpen])
 
-    // Reasoning: keep the visible row to the most-frequent actions (Attach,
-    // Slash, Settings, Abort, mic-mute when in a live call) and tuck rare
-    // controls (Terminal, Switch-to-remote) behind a "more" popover so the
-    // toolbar doesn't bloat past 5 buttons on phones.
     const overflowItems: Array<{ key: string; label: string; icon: ReactElement; onClick: () => void; disabled?: boolean; tone?: 'default' | 'switch' | 'terminal' }> = []
+    if (props.showSlashCommandButton && props.onSlashCommand) {
+        overflowItems.push({
+            key: 'slash',
+            label: t('composer.slashCommands'),
+            icon: <SlashCommandIcon />,
+            onClick: props.onSlashCommand,
+            disabled: props.controlsDisabled,
+        })
+    }
+    if (props.showSettingsButton) {
+        overflowItems.push({
+            key: 'settings',
+            label: t('composer.settings'),
+            icon: <SettingsIcon />,
+            onClick: props.onSettingsToggle,
+            disabled: props.controlsDisabled,
+        })
+    }
     if (props.showTerminalButton) {
         overflowItems.push({
             key: 'terminal',
@@ -421,32 +435,6 @@ export function ComposerButtons(props: {
                 >
                     <AttachmentIcon />
                 </ComposerPrimitive.AddAttachment>
-
-                {props.showSlashCommandButton ? (
-                    <button
-                        type="button"
-                        aria-label={t('composer.slashCommands')}
-                        title={t('composer.slashCommands')}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)] disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={props.onSlashCommand}
-                        disabled={props.controlsDisabled}
-                    >
-                        <SlashCommandIcon />
-                    </button>
-                ) : null}
-
-                {props.showSettingsButton ? (
-                    <button
-                        type="button"
-                        aria-label={t('composer.settings')}
-                        title={t('composer.settings')}
-                        className="settings-button flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]"
-                        onClick={props.onSettingsToggle}
-                        disabled={props.controlsDisabled}
-                    >
-                        <SettingsIcon />
-                    </button>
-                ) : null}
 
                 {props.showAbortButton ? (
                     <button

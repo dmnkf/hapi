@@ -13,6 +13,8 @@ type SessionActionMenuProps = {
     isOpen: boolean
     onClose: () => void
     sessionActive: boolean
+    onViewFiles?: () => void
+    onViewTerminal?: () => void
     onRename: () => void
     onArchive: () => void
     onDelete: () => void
@@ -229,6 +231,34 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                 aria-labelledby={headingId}
                 className="flex flex-col gap-1"
             >
+                {props.onViewFiles ? (
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className={`${baseItemClassName} hover:bg-[var(--app-subtle-bg)]`}
+                        onClick={() => { onClose(); props.onViewFiles?.() }}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--app-hint)]"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                        {t('session.tab.files')}
+                    </button>
+                ) : null}
+
+                {props.onViewTerminal ? (
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className={`${baseItemClassName} hover:bg-[var(--app-subtle-bg)]`}
+                        onClick={() => { onClose(); props.onViewTerminal?.() }}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--app-hint)]"><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></svg>
+                        {t('session.tab.terminal')}
+                    </button>
+                ) : null}
+
+                {(props.onViewFiles || props.onViewTerminal) ? (
+                    <div className="my-0.5 border-b border-[var(--app-divider)]" />
+                ) : null}
+
                 <button
                     type="button"
                     role="menuitem"

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo } from 'react'
 import type { CSSProperties } from 'react'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
-import { useTabSwipe } from '@/hooks/useTabSwipe'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { useQueryClient } from '@tanstack/react-query'
@@ -39,8 +38,7 @@ import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
 import { clearDraftsAfterSend } from '@/lib/clearDraftsAfterSend'
 import type { Machine } from '@/types/api'
-import { FocusBanner } from '@/components/FocusBanner'
-import { enterFocusQueue, syncFocusIndexToSession } from '@/lib/focusQueue'
+import { advanceFocusQueue, enterFocusQueue, exitFocusQueue, syncFocusIndexToSession } from '@/lib/focusQueue'
 import { useFocusQueue } from '@/hooks/useFocusQueue'
 import FilesPage from '@/routes/sessions/files'
 import FilePage from '@/routes/sessions/file'
@@ -359,7 +357,13 @@ function SessionsIndexPage() {
     return null
 }
 
-function SessionPage(props: { view: 'activity' | 'chat' }) {
+function SessionPage(props: {
+    focusActive?: boolean
+    focusCurrent?: number
+    focusTotal?: number
+    onFocusNext?: () => void
+    onFocusExit?: () => void
+}) {
     const { api } = useAppContext()
     const { t } = useTranslation()
     const goBack = useAppGoBack()
@@ -472,20 +476,6 @@ function SessionPage(props: { view: 'activity' | 'chat' }) {
         void refetchMessages()
     }, [refetchMessages, refetchSession])
 
-    const viewActivity = useCallback(() => {
-        startViewTransition(() => navigate({
-            to: '/sessions/$sessionId/activity',
-            params: { sessionId }
-        }))
-    }, [navigate, sessionId])
-
-    const viewChat = useCallback(() => {
-        startViewTransition(() => navigate({
-            to: '/sessions/$sessionId/chat',
-            params: { sessionId }
-        }))
-    }, [navigate, sessionId])
-
     if (!session) {
         return (
             <div className="flex-1 flex items-center justify-center p-4">
@@ -515,9 +505,11 @@ function SessionPage(props: { view: 'activity' | 'chat' }) {
             onRetryMessage={retryMessage}
             autocompleteSuggestions={getAutocompleteSuggestions}
             availableSlashCommands={slashCommands}
-            view={props.view}
-            onViewActivity={viewActivity}
-            onViewChat={viewChat}
+            focusActive={props.focusActive}
+            focusCurrent={props.focusCurrent}
+            focusTotal={props.focusTotal}
+            onFocusNext={props.onFocusNext}
+            onFocusExit={props.onFocusExit}
         />
     )
 }
@@ -571,10 +563,7 @@ function SessionDetailRoute() {
     const navigate = useNavigate()
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
     const basePath = `/sessions/${sessionId}`
-    const isActivity = pathname === basePath || pathname === `${basePath}/` || pathname.startsWith(`${basePath}/activity`)
-    const isChat = pathname.startsWith(`${basePath}/chat`)
-    const isFiles = pathname.startsWith(`${basePath}/files`) || pathname.startsWith(`${basePath}/file`)
-    const isTerminal = pathname.startsWith(`${basePath}/terminal`)
+    const isChat = pathname === basePath || pathname === `${basePath}/`
     const focusQueue = useFocusQueue()
     const isFocusActive = focusQueue.active && focusQueue.ids.includes(sessionId)
 
@@ -589,61 +578,37 @@ function SessionDetailRoute() {
     }, [navigate])
     const { containerRef: swipeRef, offset: swipeOffset, progress: swipeProgress } = useSwipeBack(handleSwipeBack)
 
-    // Tab order: Activity → Chat → Files → Terminal. Swipe-left advances, swipe-right
-    // goes back. From Activity, swiping right falls back to swipe-back behavior
-    // (handled by useSwipeBack at the left edge).
-    const goNextTab = useCallback(() => {
-        if (isActivity) {
+    const focusCurrent = isFocusActive ? focusQueue.ids.indexOf(sessionId) + 1 : 0
+    const focusTotal = isFocusActive ? focusQueue.ids.length : 0
+    const handleFocusNext = useCallback(() => {
+        const nextId = advanceFocusQueue(sessionId)
+        if (nextId) {
             startViewTransition(() => navigate({
-                to: '/sessions/$sessionId/chat',
-                params: { sessionId }
+                to: '/sessions/$sessionId',
+                params: { sessionId: nextId },
+                search: { focus: 1 },
             }))
-        } else if (isChat) {
-            startViewTransition(() => navigate({
-                to: '/sessions/$sessionId/files',
-                params: { sessionId }
-            }))
-        } else if (isFiles) {
-            startViewTransition(() => navigate({
-                to: '/sessions/$sessionId/terminal',
-                params: { sessionId }
-            }))
+        } else {
+            startViewTransition(() => navigate({ to: '/sessions' }))
         }
-    }, [navigate, sessionId, isActivity, isChat, isFiles])
-
-    const goPrevTab = useCallback(() => {
-        if (isTerminal) {
-            startViewTransition(() => navigate({
-                to: '/sessions/$sessionId/files',
-                params: { sessionId }
-            }))
-        } else if (isFiles) {
-            startViewTransition(() => navigate({
-                to: '/sessions/$sessionId/chat',
-                params: { sessionId }
-            }))
-        } else if (isChat) {
-            startViewTransition(() => navigate({
-                to: '/sessions/$sessionId/activity',
-                params: { sessionId }
-            }))
-        }
-    }, [navigate, sessionId, isTerminal, isFiles, isChat])
-
-    const { containerRef: tabSwipeRef } = useTabSwipe({
-        onSwipeLeft: goNextTab,
-        onSwipeRight: goPrevTab,
-    })
+    }, [navigate, sessionId])
+    const handleFocusExit = useCallback(() => {
+        exitFocusQueue()
+        startViewTransition(() => navigate({
+            to: '/sessions/$sessionId',
+            params: { sessionId },
+            search: {},
+        }))
+    }, [navigate, sessionId])
 
     return (
         <div
             ref={swipeRef}
-            className="flex h-full min-h-0 flex-col [--app-floating-bottom-offset:0px]"
+            className="flex h-full min-h-0 flex-col"
         >
             <SwipeBackIndicator offset={swipeOffset} progress={swipeProgress} />
-            {isFocusActive ? <FocusBanner sessionId={sessionId} /> : null}
-            <div ref={tabSwipeRef} className="flex-1 min-h-0">
-                {isActivity ? <SessionPage view="activity" /> : isChat ? <SessionPage view="chat" /> : <Outlet />}
+            <div className="flex-1 min-h-0">
+                {isChat ? <SessionPage focusActive={isFocusActive} focusCurrent={focusCurrent} focusTotal={focusTotal} onFocusNext={handleFocusNext} onFocusExit={handleFocusExit} /> : <Outlet />}
             </div>
         </div>
     )
@@ -801,18 +766,6 @@ const sessionDetailRoute = createRoute({
     component: SessionDetailRoute,
 })
 
-const sessionActivityRoute = createRoute({
-    getParentRoute: () => sessionDetailRoute,
-    path: 'activity',
-    component: () => null,
-})
-
-const sessionChatRoute = createRoute({
-    getParentRoute: () => sessionDetailRoute,
-    path: 'chat',
-    component: () => null,
-})
-
 const sessionFilesRoute = createRoute({
     getParentRoute: () => sessionDetailRoute,
     path: 'files',
@@ -916,8 +869,6 @@ export const routeTree = rootRoute.addChildren([
         sessionsIndexRoute,
         newSessionRoute,
         sessionDetailRoute.addChildren([
-            sessionActivityRoute,
-            sessionChatRoute,
             sessionTerminalRoute,
             sessionFilesRoute,
             sessionFileRoute,

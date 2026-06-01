@@ -20,7 +20,7 @@ import { buildConversationOutline, getConversationMessageAnchorId, type Conversa
 import { buildSessionActivity, getActivityQueueCount } from '@/chat/activity'
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
-import { ActivityPanel, ActivitySheet } from '@/components/AssistantChat/ActivitySheet'
+import { ActivitySheet } from '@/components/AssistantChat/ActivitySheet'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
 import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { useTranslation } from '@/lib/use-translation'
@@ -66,14 +66,15 @@ export function SessionChat(props: {
     onRetryMessage?: (localId: string) => void
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
     availableSlashCommands?: readonly SlashCommand[]
-    view?: 'activity' | 'chat'
-    onViewActivity?: () => void
-    onViewChat?: () => void
+    focusActive?: boolean
+    focusCurrent?: number
+    focusTotal?: number
+    onFocusNext?: () => void
+    onFocusExit?: () => void
 }) {
     const { haptic } = usePlatform()
     const { t } = useTranslation()
     const navigate = useNavigate()
-    const view = props.view ?? 'chat'
     const sessionInactive = !props.session.active
     const terminalSupported = isRemoteTerminalSupported(props.session.metadata)
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
@@ -282,24 +283,20 @@ export function SessionChat(props: {
     )
 
     const handleActivityOutlineSelect = useCallback((item: ConversationOutlineItem) => {
-        const target = document.getElementById(getConversationMessageAnchorId(item.targetMessageId))
-        if (target) {
-            target.scrollIntoView({ block: 'start', behavior: 'smooth' })
-        } else {
-            props.onViewChat?.()
-        }
         setActivityOpen(false)
-    }, [props.onViewChat])
+        requestAnimationFrame(() => {
+            const target = document.getElementById(getConversationMessageAnchorId(item.targetMessageId))
+            target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        })
+    }, [])
 
     const handleActivityToolJump = useCallback((targetToolId: string) => {
-        const target = document.getElementById(getConversationMessageAnchorId(`tool:${targetToolId}`))
-        if (target) {
-            target.scrollIntoView({ block: 'start', behavior: 'smooth' })
-        } else {
-            props.onViewChat?.()
-        }
         setActivityOpen(false)
-    }, [props.onViewChat])
+        requestAnimationFrame(() => {
+            const target = document.getElementById(getConversationMessageAnchorId(`tool:${targetToolId}`))
+            target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        })
+    }, [])
 
     // Permission mode change handler
     const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
@@ -413,8 +410,13 @@ export function SessionChat(props: {
                 onBack={props.onBack}
                 onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
                 onViewTerminal={props.session.active && terminalSupported ? handleViewTerminal : undefined}
-                onOpenActivity={view === 'activity' ? undefined : (props.onViewActivity ?? (() => setActivityOpen(true)))}
-                activityCount={view === 'activity' ? undefined : activityCount}
+                onOpenActivity={() => setActivityOpen(true)}
+                activityCount={activityCount}
+                focusActive={props.focusActive}
+                focusCurrent={props.focusCurrent}
+                focusTotal={props.focusTotal}
+                onFocusNext={props.onFocusNext}
+                onFocusExit={props.onFocusExit}
                 api={props.api}
                 onSessionDeleted={props.onBack}
             />
@@ -423,38 +425,9 @@ export function SessionChat(props: {
                 <TeamPanel teamState={props.session.teamState} />
             )}
 
-            {sessionInactive ? (
-                <div className="mx-auto flex w-full max-w-content items-center gap-2 px-3 py-1 text-[11px] text-[var(--app-hint)]">
-                    <span aria-hidden="true" className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-hint)] opacity-60" />
-                    <span className="truncate">Inactive — send to resume</span>
-                </div>
-            ) : null}
-
             <AssistantRuntimeProvider runtime={runtime}>
                 <div className="relative flex min-h-0 flex-1 flex-col">
-                    {view === 'activity' ? (
-                        <ActivityPanel
-                            api={props.api}
-                            sessionId={props.session.id}
-                            metadata={props.session.metadata}
-                            disabled={sessionInactive}
-                            activity={activity}
-                            backgroundTaskCount={props.session.backgroundTaskCount}
-                            outlineTitle={outlineTitle}
-                            outlineItems={outlineItems}
-                            hasMoreMessages={props.hasMoreMessages}
-                            isLoadingMoreMessages={props.isLoadingMoreMessages}
-                            onLoadMore={() => {
-                                void props.onLoadMore()
-                            }}
-                            onSelectOutline={handleActivityOutlineSelect}
-                            onJumpToTool={handleActivityToolJump}
-                            onRefresh={props.onRefresh}
-                            onClose={() => setActivityOpen(false)}
-                            onOpenChat={props.onViewChat}
-                        />
-                    ) : (
-                        <HappyThread
+                    <HappyThread
                             key={props.session.id}
                             api={props.api}
                             sessionId={props.session.id}
@@ -479,7 +452,6 @@ export function SessionChat(props: {
                             outlineItems={outlineItems}
                             onOutlineOpenChange={setOutlineOpen}
                         />
-                    )}
 
                     <ActivitySheet
                         open={activityOpen}

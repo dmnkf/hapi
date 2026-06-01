@@ -364,6 +364,7 @@ export default {
   'misc.loadingMessages': 'Loading messages…',
   'misc.typeMessage': "Type 'continue' to resume...",
   'misc.typeAMessage': 'Type a message...',
+  'misc.typeToResume': 'Type to resume session…',
   'misc.offline': 'offline',
   'misc.permissionRequired': 'permission required',
   'misc.percentLeft': '{percent}% left',

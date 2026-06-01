@@ -161,6 +161,11 @@ export function SessionHeader(props: {
     onViewTerminal?: () => void
     onOpenActivity?: () => void
     activityCount?: number
+    focusActive?: boolean
+    focusCurrent?: number
+    focusTotal?: number
+    onFocusNext?: () => void
+    onFocusExit?: () => void
     api: ApiClient | null
     onSessionDeleted?: () => void
 }) {
@@ -227,46 +232,47 @@ export function SessionHeader(props: {
                         </svg>
                     </button>
 
-                    {/* Session info - title + tappable status pill (flavor / model / permission) */}
-                    <div className="min-w-0 flex-1">
-                        <div className="truncate text-[15px] font-semibold leading-tight">
-                            {title}
+                    {/* Session info or focus controls */}
+                    {props.focusActive ? (
+                        <div className="min-w-0 flex-1 flex items-center gap-2">
+                            <span className="text-[13px] font-semibold text-[var(--app-fg)]">
+                                {t('focus.progress', { current: props.focusCurrent ?? 0, total: props.focusTotal ?? 0 })}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={props.onFocusNext}
+                                className="inline-flex items-center gap-1 rounded-full bg-[var(--app-fg)] px-3 py-1 text-xs font-semibold text-[var(--app-bg)] transition-opacity hover:opacity-90"
+                            >
+                                {(props.focusCurrent ?? 0) < (props.focusTotal ?? 0) ? t('focus.next') : t('focus.finish')}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={props.onFocusExit}
+                                aria-label={t('focus.exit')}
+                                className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                            </button>
                         </div>
-                        <div className="mt-0.5 flex items-center gap-1.5 overflow-hidden text-[11px] leading-tight">
-                            <SessionStatusPill
-                                session={session}
-                                modelText={modelLabel?.value}
-                                onOpen={() => dispatchOpenSessionSettings(session.id)}
-                            />
-                            {worktreeBranch ? (
-                                <span className="truncate text-[var(--app-hint)]">
-                                    {worktreeBranch}
-                                </span>
-                            ) : null}
+                    ) : (
+                        <div className="min-w-0 flex-1">
+                            <div className="truncate text-[15px] font-semibold leading-tight">
+                                {title}
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-1.5 overflow-hidden text-[11px] leading-tight">
+                                <SessionStatusPill
+                                    session={session}
+                                    modelText={modelLabel?.value}
+                                    onOpen={() => dispatchOpenSessionSettings(session.id)}
+                                />
+                                {worktreeBranch ? (
+                                    <span className="truncate text-[var(--app-hint)]">
+                                        {worktreeBranch}
+                                    </span>
+                                ) : null}
+                            </div>
                         </div>
-                    </div>
-
-                    {props.onViewTerminal ? (
-                        <button
-                            type="button"
-                            onClick={props.onViewTerminal}
-                            className="flex h-11 w-11 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                            title={t('composer.terminal')}
-                        >
-                            <TerminalIcon />
-                        </button>
-                    ) : null}
-
-                    {props.onViewFiles ? (
-                        <button
-                            type="button"
-                            onClick={props.onViewFiles}
-                            className="flex h-11 w-11 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                            title={t('session.title')}
-                        >
-                            <FilesIcon />
-                        </button>
-                    ) : null}
+                    )}
 
                     {props.onOpenActivity ? (
                         <button
@@ -305,6 +311,8 @@ export function SessionHeader(props: {
                 isOpen={menuOpen}
                 onClose={() => setMenuOpen(false)}
                 sessionActive={session.active}
+                onViewFiles={props.onViewFiles}
+                onViewTerminal={props.onViewTerminal}
                 onRename={() => setRenameOpen(true)}
                 onArchive={() => setArchiveOpen(true)}
                 onDelete={() => setDeleteOpen(true)}
