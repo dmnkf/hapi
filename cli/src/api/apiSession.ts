@@ -9,15 +9,9 @@ import { apiValidationError } from '@/utils/errorUtils'
 import { AsyncLock } from '@/utils/lock'
 import type { RawJSONLines } from '@/claude/types'
 import { configuration } from '@/configuration'
-import { AGENT_MESSAGE_PAYLOAD_TYPE } from '@hapi/protocol'
-import type {
-    ClientToServerEvents,
-    ServerToClientEvents,
-    SessionCapabilities,
-    SessionEndReason,
-    SessionRuntimeSlashCommands,
-    Update
-} from '@hapi/protocol'
+import { AGENT_MESSAGE_PAYLOAD_TYPE } from "@hapi/protocol"
+import type { SessionEndReason } from '@hapi/protocol'
+import type { ClientToServerEvents, ServerToClientEvents, Update } from '@hapi/protocol'
 import {
     TerminalClosePayloadSchema,
     TerminalOpenPayloadSchema,
@@ -54,8 +48,27 @@ const SYSTEM_INJECTION_PREFIXES = [
     '<system-reminder>',
 ]
 
-type SessionAlivePayload = Parameters<ClientToServerEvents['session-alive']>[0]
-type LastSessionAlivePayload = Omit<SessionAlivePayload, 'sid' | 'time'>
+function extractRawUserTextContent(content: unknown): string | null {
+    if (typeof content === 'string') {
+        return content
+    }
+
+    if (!Array.isArray(content)) {
+        return null
+    }
+
+    const parts = content
+        .map((block) => {
+            if (!block || typeof block !== 'object' || Array.isArray(block)) return null
+            const record = block as Record<string, unknown>
+            return record.type === 'text' && typeof record.text === 'string'
+                ? record.text
+                : null
+        })
+        .filter((text): text is string => text !== null)
+
+    return parts.length > 0 ? parts.join('\n') : null
+}
 
 /**
  * Returns true if a JSONL message should be classified as a user-role message
@@ -67,17 +80,76 @@ type LastSessionAlivePayload = Omit<SessionAlivePayload, 'sid' | 'time'>
  * genuine user messages, so the only reliable signal is the message content
  * itself: injected messages always start with a well-known XML tag.
  */
-export function isExternalUserMessage(body: RawJSONLines): body is Extract<RawJSONLines, { type: 'user' }> & { message: { content: string } } {
+export function isExternalUserMessage(body: RawJSONLines): body is Extract<RawJSONLines, { type: 'user' }> {
     if (body.type !== 'user') return false
-    if (typeof body.message.content !== 'string') return false
+    const text = extractRawUserTextContent(body.message.content)
+    if (text === null) return false
     if (body.isSidechain === true) return false
     if (body.isMeta === true) return false
 
-    const trimmed = body.message.content.trimStart()
+    const trimmed = text.trimStart()
     for (const prefix of SYSTEM_INJECTION_PREFIXES) {
         if (trimmed.startsWith(prefix)) return false
     }
     return true
+}
+
+/**
+ * Dedup filter for messages arriving on the realtime socket and via reconnect
+ * backfill.  Keyed by message id (with a bounded LRU) and falls back to the
+ * legacy seq cursor for messages that lack an id.
+ *
+ * Why id-first: scheduled messages keep the seq assigned at insertion time, so
+ * a row scheduled for T+1h (seq=10) can be released after a later immediate
+ * message (seq=11) has already advanced the cursor.  A pure seq <= cursor
+ * filter would silently drop the mature emit.  See HAPI Bot R3 finding #1.
+ */
+export class IncomingMessageFilter {
+    private readonly seenIds = new Set<string>()
+    private readonly capacity: number
+    private lastSeenSeq: number | null = null
+
+    constructor(capacity = 256) {
+        this.capacity = capacity
+    }
+
+    cursorSeq(): number | null {
+        return this.lastSeenSeq
+    }
+
+    /** Returns true if this message should be processed; false to drop as a duplicate. */
+    accept(message: { id?: string | null; seq?: number | null }): boolean {
+        const id = typeof message.id === 'string' && message.id.length > 0 ? message.id : null
+        if (id && this.seenIds.has(id)) {
+            // Refresh recency: the hub re-emits the same id every 5 s until the
+            // CLI acks (releaseMatureScheduledMessages contract).  Without a
+            // delete+re-add the entry stays at its first-insert position and can
+            // be evicted by a burst of unrelated ids before the ack lands —
+            // the next re-emit would then be treated as new and double-deliver.
+            this.seenIds.delete(id)
+            this.seenIds.add(id)
+            return false
+        }
+
+        const seq = typeof message.seq === 'number' ? message.seq : null
+        if (!id && seq !== null && this.lastSeenSeq !== null && seq <= this.lastSeenSeq) {
+            return false
+        }
+
+        if (id) {
+            this.seenIds.add(id)
+            if (this.seenIds.size > this.capacity) {
+                // Set iteration is insertion-ordered; with delete+re-add on dedup hit
+                // (above) this becomes a true LRU eviction.
+                const oldest = this.seenIds.values().next().value
+                if (oldest !== undefined) this.seenIds.delete(oldest)
+            }
+        }
+        if (seq !== null) {
+            this.lastSeenSeq = Math.max(this.lastSeenSeq ?? 0, seq)
+        }
+        return true
+    }
 }
 
 export class ApiSessionClient extends EventEmitter {
@@ -90,16 +162,13 @@ export class ApiSessionClient extends EventEmitter {
     private readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>
     private pendingMessages: { message: UserMessage; localId?: string }[] = []
     private pendingMessageCallback: ((message: UserMessage, localId?: string) => void) | null = null
-    private lastSeenMessageSeq: number | null = null
+    private cancelQueuedMessageCallback: ((localId: string) => boolean) | null = null
+    private readonly incomingFilter = new IncomingMessageFilter()
     private backfillInFlight: Promise<void> | null = null
     private needsBackfill = false
     private hasConnectedOnce = false
-    private lastSessionAlivePayload: LastSessionAlivePayload = { thinking: false }
-    private lastSessionCapabilities: SessionCapabilities | null = null
-    private lastSessionSlashCommands: SessionRuntimeSlashCommands | null = null
     readonly rpcHandlerManager: RpcHandlerManager
     private readonly terminalManager: TerminalManager
-    private terminalCloseTimer: ReturnType<typeof setTimeout> | null = null
     private agentStateLock = new AsyncLock()
     private metadataLock = new AsyncLock()
 
@@ -148,18 +217,17 @@ export class ApiSessionClient extends EventEmitter {
 
         this.socket.on('connect', () => {
             logger.debug('Socket connected successfully')
-            // Cancel pending terminal cleanup -- the socket reconnected in time.
-            if (this.terminalCloseTimer) {
-                clearTimeout(this.terminalCloseTimer)
-                this.terminalCloseTimer = null
-            }
             this.rpcHandlerManager.onSocketConnect(this.socket)
             if (this.hasConnectedOnce) {
                 this.needsBackfill = true
             }
             void this.backfillIfNeeded()
             this.hasConnectedOnce = true
-            this.emitLastKnownSessionState()
+            this.socket.emit('session-alive', {
+                sid: this.sessionId,
+                time: Date.now(),
+                thinking: false
+            })
         })
 
         this.socket.on('rpc-request', async (data: { method: string; params: string }, callback: (response: string) => void) => {
@@ -169,15 +237,7 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.on('disconnect', (reason) => {
             logger.debug('[API] Socket disconnected:', reason)
             this.rpcHandlerManager.onSocketDisconnect()
-            // Grace period: wait 5s before killing PTYs so brief network blips
-            // don't destroy the user's terminal session.
-            if (this.terminalCloseTimer) {
-                clearTimeout(this.terminalCloseTimer)
-            }
-            this.terminalCloseTimer = setTimeout(() => {
-                this.terminalCloseTimer = null
-                this.terminalManager.closeAll()
-            }, 5_000)
+            this.terminalManager.closeAll()
             if (this.hasConnectedOnce) {
                 this.needsBackfill = true
             }
@@ -222,12 +282,20 @@ export class ApiSessionClient extends EventEmitter {
             this.terminalManager.close(payload.terminalId)
         }))
 
-        this.socket.on('update', (data: Update) => {
+        this.socket.on('update', (data: Update, ack?: (response: { removed: boolean }) => void) => {
             try {
                 if (!data.body) return
 
                 if (data.body.t === 'new-message') {
                     this.handleIncomingMessage(data.body.message)
+                    return
+                }
+
+                if (data.body.t === 'cancel-queued-message') {
+                    const removed = (data.body.localId && this.cancelQueuedMessageCallback)
+                        ? this.cancelQueuedMessageCallback(data.body.localId)
+                        : false
+                    ack?.({ removed })
                     return
                 }
 
@@ -275,6 +343,10 @@ export class ApiSessionClient extends EventEmitter {
         }
     }
 
+    onCancelQueuedMessage(callback: (localId: string) => boolean): void {
+        this.cancelQueuedMessageCallback = callback
+    }
+
     private enqueueUserMessage(message: UserMessage, localId?: string): void {
         if (this.pendingMessageCallback) {
             this.pendingMessageCallback(message, localId)
@@ -283,13 +355,9 @@ export class ApiSessionClient extends EventEmitter {
         }
     }
 
-    private handleIncomingMessage(message: { seq?: number; localId?: string | null; content: unknown }): void {
-        const seq = typeof message.seq === 'number' ? message.seq : null
-        if (seq !== null) {
-            if (this.lastSeenMessageSeq !== null && seq <= this.lastSeenMessageSeq) {
-                return
-            }
-            this.lastSeenMessageSeq = seq
+    private handleIncomingMessage(message: { id?: string; seq?: number; localId?: string | null; content: unknown }): void {
+        if (!this.incomingFilter.accept({ id: message.id, seq: message.seq })) {
+            return
         }
 
         const userResult = UserMessageSchema.safeParse(message.content)
@@ -320,7 +388,7 @@ export class ApiSessionClient extends EventEmitter {
             return
         }
 
-        const startSeq = this.lastSeenMessageSeq
+        const startSeq = this.incomingFilter.cursorSeq()
         if (startSeq === null) {
             logger.debug('[API] Skipping backfill because no last-seen message sequence is available')
             return
@@ -362,7 +430,7 @@ export class ApiSessionClient extends EventEmitter {
                     this.handleIncomingMessage(message)
                 }
 
-                const observedSeq = this.lastSeenMessageSeq ?? maxSeq
+                const observedSeq = this.incomingFilter.cursorSeq() ?? maxSeq
                 const nextCursor = Math.max(maxSeq, observedSeq)
                 if (nextCursor <= cursor) {
                     logger.debug('[API] Backfill stopped due to non-advancing cursor', {
@@ -387,28 +455,6 @@ export class ApiSessionClient extends EventEmitter {
         await this.backfillInFlight
     }
 
-    private emitLastKnownSessionState(): void {
-        this.socket.emit('session-alive', {
-            sid: this.sessionId,
-            time: Date.now(),
-            ...this.lastSessionAlivePayload
-        })
-
-        if (this.lastSessionCapabilities) {
-            this.socket.emit('session-capabilities', {
-                sid: this.sessionId,
-                capabilities: this.lastSessionCapabilities
-            })
-        }
-
-        if (this.lastSessionSlashCommands) {
-            this.socket.emit('session-slash-commands', {
-                sid: this.sessionId,
-                slashCommands: this.lastSessionSlashCommands
-            })
-        }
-    }
-
     sendClaudeSessionMessage(body: RawJSONLines): void {
         let content: MessageContent
 
@@ -417,7 +463,7 @@ export class ApiSessionClient extends EventEmitter {
                 role: 'user',
                 content: {
                     type: 'text',
-                    text: body.message.content
+                    text: extractRawUserTextContent(body.message.content) ?? ''
                 },
                 meta: {
                     sentFrom: 'cli'
@@ -530,31 +576,31 @@ export class ApiSessionClient extends EventEmitter {
             collaborationMode?: SessionCollaborationMode
         }
     ): void {
-        this.lastSessionAlivePayload = {
-            thinking,
-            mode,
-            ...(runtime ?? {})
-        }
         this.socket.volatile.emit('session-alive', {
             sid: this.sessionId,
             time: Date.now(),
-            ...this.lastSessionAlivePayload
+            thinking,
+            mode,
+            ...(runtime ?? {})
         })
     }
 
-    emitMessagesConsumed(localIds: string[]): void {
+    emitMessagesConsumed(localIds: string[], options?: { clearQueuedThinkingGrace?: boolean }): void {
         if (localIds.length === 0) return
-        this.socket.emit('messages-consumed', { sid: this.sessionId, localIds })
-    }
-
-    emitSessionCapabilities(capabilities: SessionCapabilities): void {
-        this.lastSessionCapabilities = capabilities
-        this.socket.emit('session-capabilities', { sid: this.sessionId, capabilities })
-    }
-
-    emitSessionSlashCommands(slashCommands: SessionRuntimeSlashCommands): void {
-        this.lastSessionSlashCommands = slashCommands
-        this.socket.emit('session-slash-commands', { sid: this.sessionId, slashCommands })
+        // `clearQueuedThinkingGrace` is an opt-in signal for the hub to drop
+        // the 15s queued-thinking grace immediately. Only synchronous handlers
+        // that will never call `onThinkingChange(true)` (slash commands handled
+        // inside `onUserMessage`) should set it — normal queue drains still
+        // need the grace so the spinner doesn't flicker between drain and
+        // backend.prompt start.
+        const payload: { sid: string; localIds: string[]; clearQueuedThinkingGrace?: boolean } = {
+            sid: this.sessionId,
+            localIds
+        }
+        if (options?.clearQueuedThinkingGrace) {
+            payload.clearQueuedThinkingGrace = true
+        }
+        this.socket.emit('messages-consumed', payload)
     }
 
     sendSessionDeath(reason?: SessionEndReason): void {
@@ -724,10 +770,6 @@ export class ApiSessionClient extends EventEmitter {
 
     close(): void {
         this.rpcHandlerManager.onSocketDisconnect()
-        if (this.terminalCloseTimer) {
-            clearTimeout(this.terminalCloseTimer)
-            this.terminalCloseTimer = null
-        }
         this.terminalManager.closeAll()
         this.socket.disconnect()
     }

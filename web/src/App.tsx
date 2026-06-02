@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet, useLocation, useMatchRoute, useRouter } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { getTelegramWebApp, isTelegramApp } from '@/hooks/useTelegram'
+import { initializeChatSurfaceColors } from '@/hooks/useChatSurfaceColors'
 import { initializeTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthSource } from '@/hooks/useAuthSource'
@@ -18,6 +19,7 @@ import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useTranslation } from '@/lib/use-translation'
 import { VoiceProvider } from '@/lib/voice-context'
 import { requireHubUrlForLogin } from '@/lib/runtime-config'
+import { getAppGlobalSseSubscription, getAppSessionSseSubscription } from '@/lib/appSseSubscriptions'
 import { LoginPrompt } from '@/components/LoginPrompt'
 import { InstallPrompt } from '@/components/InstallPrompt'
 import { OfflineBanner } from '@/components/OfflineBanner'
@@ -57,6 +59,7 @@ function AppInner() {
         tg?.ready()
         tg?.expand()
         initializeTheme()
+        initializeChatSurfaceColors()
     }, [])
 
     // Track visual viewport height for mobile keyboard avoidance (see useViewportHeight.ts)
@@ -239,41 +242,98 @@ function AppInner() {
         clearMessageWindow(event.sessionId)
         void fetchLatestMessages(api, event.sessionId)
     }, [api, selectedSessionId])
+    const translateIncomingToast = useCallback((title: string, body: string): { title: string; body: string } => {
+        const normalizedTitle = title.trim()
+        const normalizedBody = body.trim()
+
+        if (normalizedTitle === 'Ready for input') {
+            const waitingMatch = normalizedBody.match(/^(.+)\s+is waiting in\s+(.+)$/i)
+            if (waitingMatch) {
+                const agent = waitingMatch[1]?.trim() ?? ''
+                const sessionName = waitingMatch[2]?.trim() ?? ''
+                return {
+                    title: t('toast.ready.title'),
+                    body: t('toast.ready.body', { agent, session: sessionName })
+                }
+            }
+            return {
+                title: t('toast.ready.title'),
+                body: normalizedBody
+            }
+        }
+
+        if (normalizedTitle === 'Permission Request') {
+            return {
+                title: t('toast.permission.title'),
+                body: normalizedBody
+            }
+        }
+
+        if (normalizedTitle === 'Task completed') {
+            return {
+                title: t('toast.task.completed'),
+                body: normalizedBody
+            }
+        }
+
+        if (normalizedTitle === 'Task failed') {
+            return {
+                title: t('toast.task.failed'),
+                body: normalizedBody
+            }
+        }
+
+        return { title, body }
+    }, [t])
+
     const handleToast = useCallback((event: ToastEvent) => {
+        const localized = translateIncomingToast(event.data.title, event.data.body)
         addToast({
-            title: event.data.title,
-            body: event.data.body,
+            title: localized.title,
+            body: localized.body,
             sessionId: event.data.sessionId,
             url: event.data.url
         })
-    }, [addToast])
+    }, [addToast, translateIncomingToast])
 
-    const eventSubscription = useMemo(() => {
-        if (selectedSessionId) {
-            return { sessionId: selectedSessionId }
-        }
-        return { all: true }
-    }, [selectedSessionId])
+    const globalEventSubscription = useMemo(() => getAppGlobalSseSubscription(), [])
+    const sessionEventSubscription = useMemo(
+        () => getAppSessionSseSubscription(selectedSessionId),
+        [selectedSessionId]
+    )
+    const sseEnabled = Boolean(api && token)
 
-    const { subscriptionId, reconnect: reconnectSse } = useSSE({
-        enabled: Boolean(api && token),
+    const { subscriptionId: globalSubscriptionId } = useSSE({
+        enabled: sseEnabled,
         token: token ?? '',
         baseUrl,
-        subscription: eventSubscription,
+        subscription: globalEventSubscription,
+        scope: 'global',
         onConnect: handleSseConnect,
         onDisconnect: handleSseDisconnect,
-        onEvent: handleSseEvent,
+        onEvent: () => {},
         onToast: handleToast
     })
-    const handleSubscriptionMissing = useCallback(() => {
-        reconnectSse('subscription-missing')
-    }, [reconnectSse])
+
+    const { subscriptionId: sessionSubscriptionId } = useSSE({
+        enabled: sseEnabled && Boolean(sessionEventSubscription),
+        token: token ?? '',
+        baseUrl,
+        subscription: sessionEventSubscription ?? undefined,
+        scope: 'full',
+        onEvent: handleSseEvent
+    })
 
     useVisibilityReporter({
         api,
-        subscriptionId,
-        enabled: Boolean(api && token),
-        onSubscriptionMissing: handleSubscriptionMissing
+        subscriptionId: globalSubscriptionId,
+        enabled: sseEnabled
+    })
+
+    useVisibilityReporter({
+        api,
+        subscriptionId: sessionSubscriptionId,
+        enabled: sseEnabled && Boolean(sessionEventSubscription)
     })
 
     // Loading auth source

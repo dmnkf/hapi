@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
-import { startViewTransition } from '@/lib/viewTransition'
 import type {
     AttachmentMetadata,
     CodexCollaborationMode,
@@ -16,11 +15,15 @@ import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks } from '@/chat/reconcile'
-import { buildConversationOutline, getConversationMessageAnchorId, type ConversationOutlineItem } from '@/chat/outline'
-import { buildSessionActivity, getActivityQueueCount } from '@/chat/activity'
+import { buildConversationOutline } from '@/chat/outline'
+import { buildVisibleChatBlocks, isToolGroupBlock, type ToolGroupBlock } from '@/chat/toolGroups'
+import { isQueuedForInvocation, mergeMessages } from '@/lib/messages'
+import { inactiveSessionCanResume } from '@/lib/sessionResume'
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
+import type { PendingSchedule } from '@/components/AssistantChat/ScheduleTimePicker'
+import { resolvePendingSchedule } from '@/components/AssistantChat/ScheduleTimePicker'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
-import { ActivitySheet } from '@/components/AssistantChat/ActivitySheet'
+import { QueuedMessagesBar } from '@/components/AssistantChat/QueuedMessagesBar'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
 import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { useTranslation } from '@/lib/use-translation'
@@ -29,9 +32,39 @@ import { TeamPanel } from '@/components/TeamPanel'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { useCodexModels } from '@/hooks/queries/useCodexModels'
+import { useCursorModels } from '@/hooks/queries/useCursorModels'
+import { useOpencodeModels } from '@/hooks/queries/useOpencodeModels'
 import { useVoiceOptional } from '@/lib/voice-context'
 import { RealtimeVoiceSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
 import { isRemoteTerminalSupported } from '@/utils/terminalSupport'
+
+/**
+ * Returns whether a PendingSchedule should trigger an auto-clear timer.
+ *
+ * Only 'absolute' schedules expire (the chosen instant passes).
+ * 'preset' schedules are relative to send time and have no fixed expiry.
+ *
+ * Used both by the auto-clear useEffect and by unit tests, so a future
+ * variant of PendingSchedule only needs to update this single helper.
+ */
+export function shouldAutoClearPendingSchedule(pending: PendingSchedule | null): boolean {
+    return pending !== null && pending.type === 'absolute'
+}
+
+function isUninvokedScheduledMessage(message: DecryptedMessage): boolean {
+    return message.invokedAt == null && message.scheduledAt != null
+}
+
+export function buildGoalStateMessages(
+    messages: DecryptedMessage[],
+    pendingMessages: DecryptedMessage[] = []
+): DecryptedMessage[] {
+    const eligibleMessages = messages.filter((message) => !isUninvokedScheduledMessage(message))
+    const eligiblePendingMessages = pendingMessages.filter((message) => !isUninvokedScheduledMessage(message))
+    return eligiblePendingMessages.length > 0
+        ? mergeMessages(eligibleMessages, eligiblePendingMessages)
+        : eligibleMessages
+}
 
 function getOutlineTitle(session: Session): string {
     if (session.metadata?.name) {
@@ -46,10 +79,28 @@ function getOutlineTitle(session: Session): string {
     return session.id.slice(0, 8)
 }
 
+function hasAbortableAgentRun(blocks: readonly ChatBlock[]): boolean {
+    for (const block of blocks) {
+        if (block.kind === 'tool-call') {
+            if (
+                block.tool.name === 'CodexAgent'
+                && (block.tool.state === 'running' || block.tool.state === 'pending')
+            ) {
+                return true
+            }
+            if (hasAbortableAgentRun(block.children)) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
 export function SessionChat(props: {
     api: ApiClient
     session: Session
     messages: DecryptedMessage[]
+    pendingMessages?: DecryptedMessage[]
     messagesWarning: string | null
     hasMoreMessages: boolean
     isLoadingMessages: boolean
@@ -60,28 +111,28 @@ export function SessionChat(props: {
     onBack: () => void
     onRefresh: () => void
     onLoadMore: () => Promise<unknown>
-    onSend: (text: string, attachments?: AttachmentMetadata[]) => void
+    // Resolves true when the send was accepted by the underlying mutation, false when
+    // pre-mutation guards (no-api / no-session / pending) rejected the call OR async
+    // inactive-session resume failed. Composer state that should only be cleared on
+    // actual send (pendingSchedule) must await this — see handleSend below.
+    onSend: (text: string, attachments?: AttachmentMetadata[], scheduledAt?: number | null) => Promise<boolean>
     onFlushPending: () => void
     onAtBottomChange: (atBottom: boolean) => void
     onRetryMessage?: (localId: string) => void
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
     availableSlashCommands?: readonly SlashCommand[]
-    focusActive?: boolean
-    focusCurrent?: number
-    focusTotal?: number
-    onFocusNext?: () => void
-    onFocusExit?: () => void
 }) {
     const { haptic } = usePlatform()
     const { t } = useTranslation()
     const navigate = useNavigate()
     const sessionInactive = !props.session.active
+    const inactiveCanResume = inactiveSessionCanResume(props.session, props.messages.length)
     const terminalSupported = isRemoteTerminalSupported(props.session.metadata)
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
+    const visibleGroupsRef = useRef<ToolGroupBlock[]>([])
     const [forceScrollToken, setForceScrollToken] = useState(0)
     const [outlineOpen, setOutlineOpen] = useState(false)
-    const [activityOpen, setActivityOpen] = useState(false)
     const agentFlavor = props.session.metadata?.flavor ?? null
     const controlledByUser = props.session.agentState?.controlledByUser === true
     const codexCollaborationModeSupported = agentFlavor === 'codex' && !controlledByUser
@@ -104,6 +155,41 @@ export function SessionChat(props: {
         }
         return options
     }, [agentFlavor, codexModelsState.models])
+    const opencodeModelsState = useOpencodeModels({
+        api: props.api,
+        sessionId: props.session.id,
+        enabled: agentFlavor === 'opencode' && props.session.active
+    })
+    const opencodeModelOptions = useMemo(() => {
+        if (agentFlavor !== 'opencode') {
+            return undefined
+        }
+
+        return opencodeModelsState.availableModels.map((opencodeModel) => ({
+            value: opencodeModel.modelId,
+            label: opencodeModel.name ?? opencodeModel.modelId
+        }))
+    }, [agentFlavor, opencodeModelsState.availableModels])
+    const cursorModelsState = useCursorModels({
+        api: props.api,
+        sessionId: props.session.id,
+        enabled: agentFlavor === 'cursor' && props.session.active
+    })
+    const cursorModelOptions = useMemo(() => {
+        if (agentFlavor !== 'cursor') {
+            return undefined
+        }
+
+        return [
+            { value: null, label: 'Default' },
+            ...cursorModelsState.availableModels
+                .filter((cursorModel) => cursorModel.modelId !== 'auto')
+                .map((cursorModel) => ({
+                    value: cursorModel.modelId,
+                    label: cursorModel.name ?? cursorModel.modelId
+                }))
+        ]
+    }, [agentFlavor, cursorModelsState.availableModels])
     const {
         abortSession,
         switchSession,
@@ -215,22 +301,35 @@ export function SessionChat(props: {
     useEffect(() => {
         normalizedCacheRef.current.clear()
         blocksByIdRef.current.clear()
+        visibleGroupsRef.current = []
         setOutlineOpen(false)
-        setActivityOpen(false)
     }, [props.session.id])
+
+    // Exclude user messages that haven't been invoked yet — those appear in the
+    // QueuedMessagesBar above the composer, not in the thread timeline. The
+    // `isQueuedForInvocation` predicate is shared with the window store and the
+    // floating bar so the three views never disagree about queued state.
+    const visibleMessages = useMemo(
+        () => props.messages.filter((m) => !isQueuedForInvocation(m)),
+        [props.messages]
+    )
 
     const normalizedMessages: NormalizedMessage[] = useMemo(() => {
         // Clear caches immediately when session changes (before useEffect runs)
         if (prevSessionIdRef.current !== null && prevSessionIdRef.current !== props.session.id) {
             normalizedCacheRef.current.clear()
             blocksByIdRef.current.clear()
+            visibleGroupsRef.current = []
         }
         prevSessionIdRef.current = props.session.id
 
         const cache = normalizedCacheRef.current
         const normalized: NormalizedMessage[] = []
         const seen = new Set<string>()
-        for (const message of props.messages) {
+        for (const message of visibleMessages) {
+            if (seen.has(message.id)) {
+                continue
+            }
             seen.add(message.id)
             const cached = cache.get(message.id)
             if (cached && cached.source === message) {
@@ -247,20 +346,52 @@ export function SessionChat(props: {
             }
         }
         return normalized
-    }, [props.messages])
+    }, [visibleMessages])
+
+    const goalStateSourceMessages = useMemo(
+        () => buildGoalStateMessages(props.messages, props.pendingMessages ?? []),
+        [props.messages, props.pendingMessages]
+    )
+
+    const normalizedGoalStateMessages: NormalizedMessage[] = useMemo(() => {
+        const normalized: NormalizedMessage[] = []
+        for (const message of goalStateSourceMessages) {
+            const next = normalizeDecryptedMessage(message)
+            if (next) normalized.push(next)
+        }
+        return normalized
+    }, [goalStateSourceMessages])
 
     const reduced = useMemo(
-        () => reduceChatBlocks(normalizedMessages, props.session.agentState),
-        [normalizedMessages, props.session.agentState]
+        () => reduceChatBlocks(normalizedMessages, props.session.agentState, {
+            goalStateMessages: normalizedGoalStateMessages
+        }),
+        [normalizedMessages, normalizedGoalStateMessages, props.session.agentState]
     )
     const reconciled = useMemo(
         () => reconcileChatBlocks(reduced.blocks, blocksByIdRef.current),
+        [reduced.blocks]
+    )
+    const hasRunningChildAgent = useMemo(
+        () => hasAbortableAgentRun(reduced.blocks),
         [reduced.blocks]
     )
 
     useEffect(() => {
         blocksByIdRef.current = reconciled.byId
     }, [reconciled.byId])
+
+    const visibleBlocks = useMemo(
+        () => buildVisibleChatBlocks(reconciled.blocks, {
+            hasMoreMessages: props.hasMoreMessages,
+            previousGroups: visibleGroupsRef.current
+        }),
+        [reconciled.blocks, props.hasMoreMessages]
+    )
+
+    useEffect(() => {
+        visibleGroupsRef.current = visibleBlocks.filter(isToolGroupBlock)
+    }, [visibleBlocks])
 
     const outlineItems = useMemo(
         () => buildConversationOutline(reconciled.blocks),
@@ -271,32 +402,6 @@ export function SessionChat(props: {
         () => getOutlineTitle(props.session),
         [props.session]
     )
-
-    const activity = useMemo(
-        () => buildSessionActivity(reconciled.blocks, props.session.agentState),
-        [reconciled.blocks, props.session.agentState]
-    )
-
-    const activityCount = useMemo(
-        () => getActivityQueueCount(activity, props.session.backgroundTaskCount ?? 0),
-        [activity, props.session.backgroundTaskCount]
-    )
-
-    const handleActivityOutlineSelect = useCallback((item: ConversationOutlineItem) => {
-        setActivityOpen(false)
-        requestAnimationFrame(() => {
-            const target = document.getElementById(getConversationMessageAnchorId(item.targetMessageId))
-            target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-        })
-    }, [])
-
-    const handleActivityToolJump = useCallback((targetToolId: string) => {
-        setActivityOpen(false)
-        requestAnimationFrame(() => {
-            const target = document.getElementById(getConversationMessageAnchorId(`tool:${targetToolId}`))
-            target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-        })
-    }, [])
 
     // Permission mode change handler
     const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
@@ -368,21 +473,55 @@ export function SessionChat(props: {
     }, [switchSession, props.onRefresh])
 
     const handleViewFiles = useCallback(() => {
-        startViewTransition(() => navigate({
+        navigate({
             to: '/sessions/$sessionId/files',
             params: { sessionId: props.session.id }
-        }))
+        })
     }, [navigate, props.session.id])
 
     const handleViewTerminal = useCallback(() => {
-        startViewTransition(() => navigate({
+        navigate({
             to: '/sessions/$sessionId/terminal',
             params: { sessionId: props.session.id }
-        }))
+        })
     }, [navigate, props.session.id])
 
-    const handleSend = useCallback((text: string, attachments?: AttachmentMetadata[]) => {
-        props.onSend(text, attachments)
+    // Scheduled message state — lifted here so useHappyRuntime can read the ref.
+    //
+    // pendingSchedule holds what the user selected (preset or absolute ms).
+    // The ref is read at send time; resolvePendingSchedule converts it to an
+    // absolute epoch-ms using Date.now() at that moment (send-time base for presets).
+    const [pendingSchedule, setPendingSchedule] = useState<PendingSchedule | null>(null)
+    const pendingScheduleRef = useRef<PendingSchedule | null>(null)
+    // Keep render ref in sync so onNew can snapshot at send time
+    pendingScheduleRef.current = pendingSchedule
+
+    // Auto-clear absolute-type pendingSchedule when the chosen time expires so
+    // the composer clock button doesn't stay active past the scheduled instant.
+    // Preset-type schedules are relative so they don't expire until send — the
+    // shouldAutoClearPendingSchedule predicate is the single source of truth so
+    // adding a new PendingSchedule variant only needs to update that helper.
+    useEffect(() => {
+        if (!shouldAutoClearPendingSchedule(pendingSchedule)) return
+        // Narrowed to 'absolute' by the predicate above.
+        const ms = (pendingSchedule as Extract<PendingSchedule, { type: 'absolute' }>).ms
+        const remaining = ms - Date.now()
+        if (remaining <= 0) {
+            setPendingSchedule(null)
+            return
+        }
+        const timer = setTimeout(() => setPendingSchedule(null), remaining)
+        return () => clearTimeout(timer)
+    }, [pendingSchedule])
+
+    const handleSend = useCallback(async (text: string, attachments?: AttachmentMetadata[], scheduledAt?: number | null) => {
+        const accepted = await props.onSend(text, attachments, scheduledAt)
+        if (!accepted) return
+        // Clear pendingSchedule only after the mutation is actually accepted —
+        // covers both pre-mutation guards AND async inactive-session resume
+        // failure. SessionChat is the single owner of schedule clear (HappyComposer
+        // no longer clears on its own send path).
+        setPendingSchedule(null)
         setForceScrollToken((token) => token + 1)
     }, [props.onSend])
 
@@ -395,12 +534,14 @@ export function SessionChat(props: {
 
     const runtime = useHappyRuntime({
         session: props.session,
-        blocks: reconciled.blocks,
+        blocks: visibleBlocks,
         isSending: props.isSending,
+        isRunning: props.session.thinking || hasRunningChildAgent,
         onSendMessage: handleSend,
         onAbort: handleAbort,
         attachmentAdapter,
-        allowSendWhenInactive: true
+        allowSendWhenInactive: true,
+        pendingScheduleRef
     })
 
     return (
@@ -409,14 +550,7 @@ export function SessionChat(props: {
                 session={props.session}
                 onBack={props.onBack}
                 onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
-                onViewTerminal={props.session.active && terminalSupported ? handleViewTerminal : undefined}
-                onOpenActivity={() => setActivityOpen(true)}
-                activityCount={activityCount}
-                focusActive={props.focusActive}
-                focusCurrent={props.focusCurrent}
-                focusTotal={props.focusTotal}
-                onFocusNext={props.onFocusNext}
-                onFocusExit={props.onFocusExit}
+                onOpenOutline={() => setOutlineOpen(true)}
                 api={props.api}
                 onSessionDeleted={props.onBack}
             />
@@ -425,53 +559,42 @@ export function SessionChat(props: {
                 <TeamPanel teamState={props.session.teamState} />
             )}
 
+            {sessionInactive ? (
+                <div className="px-3 pt-3">
+                    <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
+                        {inactiveCanResume
+                            ? t('session.inactive.autoResume')
+                            : t('session.inactive.cannotResume')}
+                    </div>
+                </div>
+            ) : null}
+
             <AssistantRuntimeProvider runtime={runtime}>
                 <div className="relative flex min-h-0 flex-1 flex-col">
                     <HappyThread
-                            key={props.session.id}
-                            api={props.api}
-                            sessionId={props.session.id}
-                            metadata={props.session.metadata}
-                            disabled={sessionInactive}
-                            onRefresh={props.onRefresh}
-                            onRetryMessage={props.onRetryMessage}
-                            onFlushPending={props.onFlushPending}
-                            onAtBottomChange={props.onAtBottomChange}
-                            isLoadingMessages={props.isLoadingMessages}
-                            messagesWarning={props.messagesWarning}
-                            hasMoreMessages={props.hasMoreMessages}
-                            isLoadingMoreMessages={props.isLoadingMoreMessages}
-                            onLoadMore={props.onLoadMore}
-                            pendingCount={props.pendingCount}
-                            rawMessagesCount={props.messages.length}
-                            normalizedMessagesCount={normalizedMessages.length}
-                            messagesVersion={props.messagesVersion}
-                            forceScrollToken={forceScrollToken}
-                            outlineOpen={outlineOpen}
-                            outlineTitle={outlineTitle}
-                            outlineItems={outlineItems}
-                            onOutlineOpenChange={setOutlineOpen}
-                        />
-
-                    <ActivitySheet
-                        open={activityOpen}
+                        key={props.session.id}
                         api={props.api}
                         sessionId={props.session.id}
                         metadata={props.session.metadata}
                         disabled={sessionInactive}
-                        activity={activity}
-                        backgroundTaskCount={props.session.backgroundTaskCount}
-                        outlineTitle={outlineTitle}
-                        outlineItems={outlineItems}
+                        onRefresh={props.onRefresh}
+                        onRetryMessage={props.onRetryMessage}
+                        onFlushPending={props.onFlushPending}
+                        onAtBottomChange={props.onAtBottomChange}
+                        isLoadingMessages={props.isLoadingMessages}
+                        messagesWarning={props.messagesWarning}
                         hasMoreMessages={props.hasMoreMessages}
                         isLoadingMoreMessages={props.isLoadingMoreMessages}
-                        onLoadMore={() => {
-                            void props.onLoadMore()
-                        }}
-                        onSelectOutline={handleActivityOutlineSelect}
-                        onJumpToTool={handleActivityToolJump}
-                        onRefresh={props.onRefresh}
-                        onClose={() => setActivityOpen(false)}
+                        onLoadMore={props.onLoadMore}
+                        pendingCount={props.pendingCount}
+                        rawMessagesCount={visibleMessages.length}
+                        normalizedMessagesCount={normalizedMessages.length}
+                        messagesVersion={props.messagesVersion}
+                        forceScrollToken={forceScrollToken}
+                        outlineOpen={outlineOpen}
+                        outlineTitle={outlineTitle}
+                        outlineItems={outlineItems}
+                        onOutlineOpenChange={setOutlineOpen}
                     />
 
                     {codexCollaborationModeSupported && codexModelsState.error ? (
@@ -482,24 +605,48 @@ export function SessionChat(props: {
                         </div>
                     ) : null}
 
+                    <div className="px-3">
+                        <QueuedMessagesBar
+                            sessionId={props.session.id}
+                            api={props.api}
+                            onEdit={({ pendingSchedule: restored }) => {
+                                // Restore the schedule so the clock button re-activates
+                                setPendingSchedule(restored)
+                            }}
+                        />
+                    </div>
+
                     <HappyComposer
                         key={props.session.id}
                         sessionId={props.session.id}
                         disabled={props.isSending}
+                        pendingSchedule={pendingSchedule}
+                        onSchedule={setPendingSchedule}
+                        onClearSchedule={() => setPendingSchedule(null)}
                         permissionMode={props.session.permissionMode}
                         collaborationMode={codexCollaborationModeSupported ? props.session.collaborationMode : undefined}
+                        threadGoal={reduced.latestGoal}
                         model={props.session.model}
-                        modelReasoningEffort={agentFlavor === 'codex' ? props.session.modelReasoningEffort : undefined}
+                        modelReasoningEffort={agentFlavor === 'codex' || agentFlavor === 'opencode' ? props.session.modelReasoningEffort : undefined}
                         effort={props.session.effort}
                         agentFlavor={agentFlavor}
-                        capabilities={props.session.capabilities}
-                        availableModelOptions={agentFlavor === 'codex' ? codexModelOptions : undefined}
+                        availableModelOptions={
+                            agentFlavor === 'codex'
+                                ? codexModelOptions
+                                : agentFlavor === 'cursor'
+                                    ? cursorModelOptions
+                                    : agentFlavor === 'opencode'
+                                        ? opencodeModelOptions
+                                        : undefined
+                        }
                         active={props.session.active}
                         allowSendWhenInactive
                         thinking={props.session.thinking}
                         agentState={props.session.agentState}
                         backgroundTaskCount={props.session.backgroundTaskCount}
                         contextSize={reduced.latestUsage?.contextSize}
+                        contextCacheRead={reduced.latestUsage?.cacheRead}
+                        contextWindow={reduced.latestUsage?.contextWindow}
                         controlledByUser={controlledByUser}
                         onCollaborationModeChange={
                             codexCollaborationModeSupported && props.session.active && !controlledByUser
@@ -510,10 +657,12 @@ export function SessionChat(props: {
                         onModelChange={
                             agentFlavor === 'codex'
                                 ? (props.session.active && !controlledByUser && !codexModelsState.error ? handleModelChange : undefined)
-                                : handleModelChange
+                                : agentFlavor === 'cursor'
+                                    ? (props.session.active && !cursorModelsState.error ? handleModelChange : undefined)
+                                    : handleModelChange
                         }
                         onModelReasoningEffortChange={
-                            agentFlavor === 'codex' && props.session.active && !controlledByUser
+                            (agentFlavor === 'codex' || agentFlavor === 'opencode') && props.session.active && !controlledByUser
                                 ? handleModelReasoningEffortChange
                                 : undefined
                         }

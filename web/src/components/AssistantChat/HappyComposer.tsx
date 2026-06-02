@@ -1,4 +1,4 @@
-import { CODEX_COLLABORATION_MODE_LABELS, getPermissionModeOptionsForFlavor } from '@hapi/protocol'
+import { getCodexCollaborationModeOptions, getPermissionModeOptionsForFlavor } from '@hapi/protocol'
 import { ComposerPrimitive, useAssistantApi, useAssistantState } from '@assistant-ui/react'
 import {
     type ChangeEvent as ReactChangeEvent,
@@ -12,7 +12,7 @@ import {
     useRef,
     useState
 } from 'react'
-import type { AgentState, CodexCollaborationMode, PermissionMode } from '@/types/api'
+import type { AgentState, CodexCollaborationMode, PermissionMode, ThreadGoal } from '@/types/api'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import type { ConversationStatus } from '@/realtime/types'
 import { useActiveWord } from '@/hooks/useActiveWord'
@@ -23,11 +23,12 @@ import { usePWAInstall } from '@/hooks/usePWAInstall'
 import { supportsEffort, supportsModelChange } from '@hapi/protocol'
 import { markSkillUsed } from '@/lib/recent-skills'
 import { useComposerDraft } from '@/hooks/useComposerDraft'
-import { OPEN_SESSION_SETTINGS_EVENT, type OpenSessionSettingsDetail } from '@/lib/sessionSettingsEvent'
+import { useComposerEnterBehavior } from '@/hooks/useComposerEnterBehavior'
 import { FloatingOverlay } from '@/components/ChatInput/FloatingOverlay'
 import { Autocomplete } from '@/components/ChatInput/Autocomplete'
 import { StatusBar } from '@/components/AssistantChat/StatusBar'
 import { ComposerButtons } from '@/components/AssistantChat/ComposerButtons'
+import type { PendingSchedule } from '@/components/AssistantChat/ScheduleTimePicker'
 import { AttachmentItem } from '@/components/AssistantChat/AttachmentItem'
 import { useTranslation } from '@/lib/use-translation'
 import { getModelOptionsForFlavor, getNextModelForFlavor } from './modelOptions'
@@ -41,27 +42,12 @@ export interface TextInputState {
 
 const defaultSuggestionHandler = async (): Promise<Suggestion[]> => []
 
-function formatCollaborationModeLabel(mode: string): string {
-    return CODEX_COLLABORATION_MODE_LABELS[mode as keyof typeof CODEX_COLLABORATION_MODE_LABELS]
-        ?? `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`
-}
-
-function supportsComposerModelChange(
-    agentFlavor: string | null | undefined,
-    capabilities?: import('@hapi/protocol').SessionCapabilities,
-    availableModelOptions?: Array<{ value: string | null; label: string }>
-): boolean {
-    if (supportsModelChange(agentFlavor)) {
-        return true
-    }
-    return agentFlavor === 'codex' && Boolean(capabilities?.models?.length || availableModelOptions?.length)
-}
-
 export function HappyComposer(props: {
     sessionId?: string
     disabled?: boolean
     permissionMode?: PermissionMode
     collaborationMode?: CodexCollaborationMode
+    threadGoal?: ThreadGoal | null
     model?: string | null
     modelReasoningEffort?: string | null
     effort?: string | null
@@ -71,9 +57,10 @@ export function HappyComposer(props: {
     agentState?: AgentState | null
     backgroundTaskCount?: number
     contextSize?: number
+    contextCacheRead?: number
+    contextWindow?: number | null
     controlledByUser?: boolean
     agentFlavor?: string | null
-    capabilities?: import('@hapi/protocol').SessionCapabilities
     availableModelOptions?: Array<{ value: string | null; label: string }>
     onCollaborationModeChange?: (mode: CodexCollaborationMode) => void
     onPermissionModeChange?: (mode: PermissionMode) => void
@@ -90,6 +77,10 @@ export function HappyComposer(props: {
     voiceMicMuted?: boolean
     onVoiceToggle?: () => void
     onVoiceMicToggle?: () => void
+    // Schedule props (lifted from internal state when provided)
+    pendingSchedule?: PendingSchedule | null
+    onSchedule?: (pending: PendingSchedule) => void
+    onClearSchedule?: () => void
 }) {
     const { t } = useTranslation()
     const {
@@ -97,6 +88,7 @@ export function HappyComposer(props: {
         disabled = false,
         permissionMode: rawPermissionMode,
         collaborationMode: rawCollaborationMode,
+        threadGoal,
         model: rawModel,
         modelReasoningEffort: rawModelReasoningEffort,
         effort: rawEffort,
@@ -106,9 +98,10 @@ export function HappyComposer(props: {
         agentState,
         backgroundTaskCount,
         contextSize,
+        contextCacheRead,
+        contextWindow,
         controlledByUser = false,
         agentFlavor,
-        capabilities,
         availableModelOptions,
         onCollaborationModeChange,
         onPermissionModeChange,
@@ -123,7 +116,10 @@ export function HappyComposer(props: {
         voiceStatus = 'disconnected',
         voiceMicMuted = false,
         onVoiceToggle,
-        onVoiceMicToggle
+        onVoiceMicToggle,
+        pendingSchedule: pendingScheduleProp,
+        onSchedule: onScheduleProp,
+        onClearSchedule: onClearScheduleProp
     } = props
 
     // Use ?? so missing values fall back to default (destructuring defaults only handle undefined)
@@ -134,6 +130,7 @@ export function HappyComposer(props: {
     const effort = rawEffort ?? null
 
     const api = useAssistantApi()
+    const { composerEnterBehavior } = useComposerEnterBehavior()
     const composerText = useAssistantState(({ composer }) => composer.text)
     const attachments = useAssistantState(({ composer }) => composer.attachments)
     const threadIsRunning = useAssistantState(({ thread }) => thread.isRunning)
@@ -163,25 +160,16 @@ export function HappyComposer(props: {
     const [isAborting, setIsAborting] = useState(false)
     const [isSwitching, setIsSwitching] = useState(false)
     const [showContinueHint, setShowContinueHint] = useState(false)
+    // pendingSchedule is controlled externally when onSchedule prop is provided; otherwise local state
+    const [pendingScheduleLocal, setPendingScheduleLocal] = useState<PendingSchedule | null>(null)
+    const isControlled = onScheduleProp !== undefined
+    const pendingSchedule = isControlled ? (pendingScheduleProp ?? null) : pendingScheduleLocal
+    const setPendingSchedule = isControlled ? onScheduleProp : setPendingScheduleLocal
 
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const prevControlledByUser = useRef(controlledByUser)
 
     useComposerDraft(sessionId, composerText, (text) => api.composer().setText(text))
-
-    // Open settings overlay when the header status pill (or any other surface)
-    // dispatches the session-scoped open-settings event.
-    useEffect(() => {
-        if (!sessionId) return
-        const onOpen = (event: Event) => {
-            const detail = (event as CustomEvent<OpenSessionSettingsDetail>).detail
-            if (detail?.sessionId === sessionId) {
-                setShowSettings(true)
-            }
-        }
-        window.addEventListener(OPEN_SESSION_SETTINGS_EVENT, onOpen as EventListener)
-        return () => window.removeEventListener(OPEN_SESSION_SETTINGS_EVENT, onOpen as EventListener)
-    }, [sessionId])
 
     useEffect(() => {
         setInputState((prev) => {
@@ -232,20 +220,12 @@ export function HappyComposer(props: {
             markSkillUsed(suggestion.text.slice(1))
         }
 
-        // For Codex user prompts with content, expand the content instead of command name
-        let textToInsert = suggestion.text
-        let addSpace = true
-        if (agentFlavor === 'codex' && suggestion.source !== 'builtin' && suggestion.content) {
-            textToInsert = suggestion.content
-            addSpace = false
-        }
-
         const result = applySuggestion(
             inputState.text,
             inputState.selection,
-            textToInsert,
+            suggestion.text,
             autocompletePrefixes,
-            addSpace
+            true
         )
 
         api.composer().setText(result.text)
@@ -266,7 +246,7 @@ export function HappyComposer(props: {
         }, 0)
 
         haptic('light')
-    }, [api, suggestions, inputState, autocompletePrefixes, haptic, agentFlavor])
+    }, [api, suggestions, inputState, autocompletePrefixes, haptic])
 
     const abortDisabled = controlsDisabled || isAborting || !threadIsRunning
     const switchDisabled = controlsDisabled || isSwitching || !controlledByUser
@@ -310,27 +290,18 @@ export function HappyComposer(props: {
         [agentFlavor]
     )
     const collaborationModeOptions = useMemo(
-        () => {
-            if (agentFlavor !== 'codex') {
-                return []
-            }
-            const runtimeModes = capabilities?.collaborationModes && capabilities.collaborationModes.length > 0
-                ? capabilities.collaborationModes
-                : ['default', 'plan']
-            return runtimeModes.map((mode) => ({
-                mode,
-                label: formatCollaborationModeLabel(mode)
-            }))
-        },
-        [agentFlavor, capabilities]
+        () => agentFlavor === 'codex' ? getCodexCollaborationModeOptions() : [],
+        [agentFlavor]
     )
     const modelOptions = useMemo(
-        () => getModelOptionsForFlavor(agentFlavor, model, capabilities, availableModelOptions),
-        [agentFlavor, model, capabilities, availableModelOptions]
+        () => getModelOptionsForFlavor(agentFlavor, model, availableModelOptions),
+        [agentFlavor, model, availableModelOptions]
     )
     const codexReasoningEffortOptions = useMemo(
-        () => agentFlavor === 'codex' ? getCodexComposerReasoningEffortOptions(modelReasoningEffort, capabilities) : [],
-        [agentFlavor, modelReasoningEffort, capabilities]
+        () => agentFlavor === 'codex' || agentFlavor === 'opencode'
+            ? getCodexComposerReasoningEffortOptions(modelReasoningEffort, agentFlavor)
+            : [],
+        [agentFlavor, modelReasoningEffort]
     )
     const claudeEffortOptions = useMemo(
         () => getClaudeComposerEffortOptions(effort),
@@ -364,6 +335,14 @@ export function HappyComposer(props: {
 
         // Only plain Enter (no modifiers) sends; other modifier combos are ignored
         if (key === 'Enter') {
+            if (composerEnterBehavior === 'newline') {
+                if ((e.ctrlKey || e.metaKey) && !e.altKey && canSend) {
+                    e.preventDefault()
+                    api.composer().send()
+                    setShowContinueHint(false)
+                }
+                return
+            }
             e.preventDefault()
             if (!e.ctrlKey && !e.altKey && !e.metaKey && canSend) {
                 api.composer().send()
@@ -424,21 +403,22 @@ export function HappyComposer(props: {
         permissionModes,
         canSend,
         api,
-        haptic
+        haptic,
+        composerEnterBehavior
     ])
 
     useEffect(() => {
         const handleGlobalKeyDown = (e: globalThis.KeyboardEvent) => {
-            if (e.key === 'm' && (e.metaKey || e.ctrlKey) && onModelChange && supportsComposerModelChange(agentFlavor, capabilities, availableModelOptions)) {
+            if (e.key === 'm' && (e.metaKey || e.ctrlKey) && onModelChange && supportsModelChange(agentFlavor)) {
                 e.preventDefault()
-                onModelChange(getNextModelForFlavor(agentFlavor, model, capabilities, availableModelOptions))
+                onModelChange(getNextModelForFlavor(agentFlavor, model, availableModelOptions))
                 haptic('light')
             }
         }
 
         window.addEventListener('keydown', handleGlobalKeyDown)
         return () => window.removeEventListener('keydown', handleGlobalKeyDown)
-    }, [model, onModelChange, haptic, agentFlavor, capabilities, availableModelOptions])
+    }, [model, onModelChange, haptic, agentFlavor, availableModelOptions])
 
     const handleChange = useCallback((e: ReactChangeEvent<HTMLTextAreaElement>) => {
         const selection = {
@@ -462,6 +442,16 @@ export function HappyComposer(props: {
 
         if (imageFiles.length === 0) return
 
+        // The backend rejects scheduledAt + attachments (per-CLI upload dir is
+        // torn down before a mature emit could read the files). The button-based
+        // attachment flow is disabled by ComposerButtons.hasAttachments, but the
+        // paste path bypasses that — guard here so a pasted image while a
+        // schedule is active cannot produce a submission the hub will reject.
+        if (pendingSchedule != null) {
+            e.preventDefault()
+            return
+        }
+
         e.preventDefault()
 
         try {
@@ -471,7 +461,7 @@ export function HappyComposer(props: {
         } catch (error) {
             console.error('Error adding pasted image:', error)
         }
-    }, [api])
+    }, [api, pendingSchedule])
 
     const handleSettingsToggle = useCallback(() => {
         haptic('light')
@@ -479,8 +469,8 @@ export function HappyComposer(props: {
     }, [haptic])
 
     const handleSubmit = useCallback((event?: ReactFormEvent<HTMLFormElement>) => {
-        if (event && !attachmentsReady) {
-            event.preventDefault()
+        event?.preventDefault()
+        if (!attachmentsReady) {
             return
         }
         setShowContinueHint(false)
@@ -523,7 +513,7 @@ export function HappyComposer(props: {
 
     const showCollaborationSettings = Boolean(onCollaborationModeChange && collaborationModeOptions.length > 0)
     const showPermissionSettings = Boolean(onPermissionModeChange && permissionModeOptions.length > 0)
-    const showModelSettings = Boolean(onModelChange && supportsComposerModelChange(agentFlavor, capabilities, availableModelOptions) && modelOptions.length > 0)
+    const showModelSettings = Boolean(onModelChange && supportsModelChange(agentFlavor) && modelOptions.length > 0)
     const showModelReasoningEffortSettings = Boolean(onModelReasoningEffortChange && codexReasoningEffortOptions.length > 0)
     const showEffortSettings = Boolean(onEffortChange && supportsEffort(agentFlavor))
     const showSettingsButton = Boolean(
@@ -534,41 +524,16 @@ export function HappyComposer(props: {
         || showEffortSettings
     )
     const showAbortButton = true
-    const showSlashCommandButton = autocompletePrefixes.includes('/')
     const voiceEnabled = Boolean(onVoiceToggle)
 
     const handleSend = useCallback(() => {
         api.composer().send()
+        // SessionChat owns clearing the schedule — it clears only after awaiting
+        // the send hook's accepted result, which covers both pre-mutation guards
+        // and async inactive-session resume failure. Clearing here unconditionally
+        // would race ahead of that check and drop the user's schedule on every
+        // rejected send path.
     }, [api])
-
-    const handleSlashCommand = useCallback(() => {
-        // Insert '/' at the start (or at cursor if text is empty) to trigger autocomplete
-        const currentText = inputState.text
-        const isEmpty = currentText.trim().length === 0
-        const newText = isEmpty ? '/' : currentText
-        const newPos = isEmpty ? 1 : inputState.selection.start
-
-        if (isEmpty) {
-            api.composer().setText(newText)
-            setInputState({ text: newText, selection: { start: newPos, end: newPos } })
-        }
-
-        // Focus the textarea so the autocomplete overlay appears
-        setTimeout(() => {
-            const el = textareaRef.current
-            if (!el) return
-            if (isEmpty) {
-                el.setSelectionRange(newPos, newPos)
-            }
-            try {
-                el.focus({ preventScroll: true })
-            } catch {
-                el.focus()
-            }
-        }, 0)
-
-        haptic('light')
-    }, [api, inputState, haptic])
 
     const overlays = useMemo(() => {
         if (showSettings && (showCollaborationSettings || showPermissionSettings || showModelSettings || showModelReasoningEffortSettings || showEffortSettings)) {
@@ -590,7 +555,7 @@ export function HappyComposer(props: {
                                                 ? 'cursor-not-allowed opacity-50'
                                                 : 'cursor-pointer hover:bg-[var(--app-secondary-bg)]'
                                         }`}
-                                        onClick={() => handleCollaborationChange(option.mode as CodexCollaborationMode)}
+                                        onClick={() => handleCollaborationChange(option.mode)}
                                         onMouseDown={(e) => e.preventDefault()}
                                     >
                                         <div
@@ -836,9 +801,13 @@ export function HappyComposer(props: {
                         agentState={agentState}
                         backgroundTaskCount={backgroundTaskCount}
                         contextSize={contextSize}
+                        contextCacheRead={contextCacheRead}
+                        contextWindow={contextWindow}
                         model={model}
+                        modelReasoningEffort={modelReasoningEffort}
                         permissionMode={permissionMode}
                         collaborationMode={collaborationMode}
+                        threadGoal={threadGoal}
                         agentFlavor={agentFlavor}
                         voiceStatus={voiceStatus}
                     />
@@ -854,7 +823,7 @@ export function HappyComposer(props: {
                             <ComposerPrimitive.Input
                                 ref={textareaRef}
                                 autoFocus={!controlsDisabled && !isTouch}
-                                placeholder={!active ? t('misc.typeToResume') : showContinueHint ? t('misc.typeMessage') : t('misc.typeAMessage')}
+                                placeholder={showContinueHint ? t('misc.typeMessage') : t('misc.typeAMessage')}
                                 disabled={controlsDisabled}
                                 maxRows={5}
                                 submitOnEnter={false}
@@ -870,8 +839,6 @@ export function HappyComposer(props: {
                         <ComposerButtons
                             canSend={canSend}
                             controlsDisabled={controlsDisabled}
-                            showSlashCommandButton={showSlashCommandButton}
-                            onSlashCommand={handleSlashCommand}
                             showSettingsButton={showSettingsButton}
                             onSettingsToggle={handleSettingsToggle}
                             showTerminalButton={showTerminalButton}
@@ -892,6 +859,10 @@ export function HappyComposer(props: {
                             onVoiceToggle={onVoiceToggle ?? (() => {})}
                             onVoiceMicToggle={onVoiceMicToggle}
                             onSend={handleSend}
+                            pendingSchedule={pendingSchedule}
+                            onSchedule={setPendingSchedule}
+                            onClearSchedule={isControlled ? onClearScheduleProp : () => setPendingScheduleLocal(null)}
+                            hasAttachments={hasAttachments}
                         />
                     </div>
                 </ComposerPrimitive.Root>

@@ -1,5 +1,7 @@
 import type {
     DecryptedMessage as ProtocolDecryptedMessage,
+    Machine,
+    RunnerState,
     Session,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
@@ -7,17 +9,50 @@ import type {
 } from '@hapi/protocol/types'
 
 export type {
+    CodexModelsResponse,
+    CodexModelSummary,
+    CommandResponse,
+    CursorModelsResponse,
+    CursorModelSummary,
+    DeleteUploadResponse,
+    DirectoryEntry,
+    FileReadResponse,
+    GitCommandResponse,
+    ListDirectoryResponse,
+    MachineDirectoryEntry,
+    MachineListDirectoryResponse,
+    MachinePathsExistsResponse,
+    AuthResponse,
+    MachinesResponse,
+    MessagesResponse,
+    OpencodeModelsResponse,
+    OpencodeModelSummary,
+    PathExistsResponse,
+    SlashCommand,
+    SlashCommandsResponse,
+    SessionResponse,
+    SessionsResponse,
+    SpawnResponse,
+    UploadFileResponse
+} from '@hapi/protocol/apiTypes'
+
+export type {
     AgentState,
     AttachmentMetadata,
     CodexCollaborationMode,
     PermissionMode,
+    Machine,
+    RunnerState,
     Session,
+    SessionPatch,
     SessionSummary,
     SessionSummaryMetadata,
     TeamMember,
     TeamMessage,
     TeamState,
     TeamTask,
+    ThreadGoal,
+    ThreadGoalStatus,
     TodoItem,
     WorktreeMetadata
 } from '@hapi/protocol/types'
@@ -32,6 +67,9 @@ export type SessionMetadataSummary = {
     machineId?: string
     tools?: string[]
     flavor?: string | null
+    capabilities?: {
+        terminal?: boolean
+    }
     worktree?: WorktreeMetadata
 }
 
@@ -40,87 +78,7 @@ export type MessageStatus = 'queued' | 'sending' | 'sent' | 'failed'
 export type DecryptedMessage = ProtocolDecryptedMessage & {
     status?: MessageStatus
     originalText?: string
-}
-
-export type RunnerState = {
-    status?: string
-    pid?: number
-    httpPort?: number
-    startedAt?: number
-    shutdownRequestedAt?: number
-    shutdownSource?: string
-    lastSpawnError?: {
-        message: string
-        pid?: number
-        exitCode?: number | null
-        signal?: string | null
-        at: number
-    } | null
-}
-
-export type Machine = {
-    id: string
-    active: boolean
-    metadata: {
-        host: string
-        platform: string
-        happyCliVersion: string
-        displayName?: string
-        workspaceRoot?: string
-    } | null
-    runnerState?: RunnerState | null
-}
-
-export type AuthResponse = {
-    token: string
-    user: {
-        id: number
-        username?: string
-        firstName?: string
-        lastName?: string
-    }
-}
-
-export type SessionsResponse = { sessions: SessionSummary[] }
-export type SessionResponse = { session: Session }
-export type MessagesResponse = {
-    messages: DecryptedMessage[]
-    page: {
-        limit: number
-        beforeSeq: number | null
-        nextBeforeSeq: number | null
-        hasMore: boolean
-    }
-}
-
-export type MachinesResponse = { machines: Machine[] }
-export type MachinePathsExistsResponse = { exists: Record<string, boolean> }
-export type MachineDirectoryResponse = ListDirectoryResponse
-
-export type MachineDirectoryEntry = {
-    name: string
-    type: 'file' | 'directory' | 'other'
-    size?: number
-    modified?: number
-    isGitRepo?: boolean
-}
-
-export type MachineListDirectoryResponse = {
-    success: boolean
-    entries?: MachineDirectoryEntry[]
-    error?: string
-}
-
-export type SpawnResponse =
-    | { type: 'success'; sessionId: string }
-    | { type: 'error'; message: string }
-
-export type GitCommandResponse = {
-    success: boolean
-    stdout?: string
-    stderr?: string
-    exitCode?: number
-    error?: string
+    invokedAt?: number | null
 }
 
 export type FileSearchItem = {
@@ -133,36 +91,6 @@ export type FileSearchItem = {
 export type FileSearchResponse = {
     success: boolean
     files?: FileSearchItem[]
-    error?: string
-}
-
-export type DirectoryEntry = {
-    name: string
-    type: 'file' | 'directory' | 'other'
-    size?: number
-    modified?: number
-}
-
-export type ListDirectoryResponse = {
-    success: boolean
-    entries?: DirectoryEntry[]
-    error?: string
-}
-
-export type FileReadResponse = {
-    success: boolean
-    content?: string
-    error?: string
-}
-
-export type UploadFileResponse = {
-    success: boolean
-    path?: string
-    error?: string
-}
-
-export type DeleteUploadResponse = {
-    success: boolean
     error?: string
 }
 
@@ -185,21 +113,6 @@ export type GitStatusFiles = {
     totalUnstaged: number
 }
 
-export type SlashCommand = {
-    name: string
-    description?: string
-    source: 'builtin' | 'runtime' | 'user' | 'plugin' | 'project'
-    content?: string  // Expanded content for Codex user prompts
-    pluginName?: string
-    inputHint?: string
-}
-
-export type SlashCommandsResponse = {
-    success: boolean
-    commands?: SlashCommand[]
-    error?: string
-}
-
 export type SkillSummary = {
     name: string
     description?: string
@@ -210,86 +123,6 @@ export type SkillsResponse = {
     skills?: SkillSummary[]
     error?: string
 }
-
-export type CodexModelSummary = {
-    id: string
-    displayName: string
-    isDefault: boolean
-    defaultReasoningEffort?: string | null
-    supportedReasoningEfforts?: string[]
-}
-
-export type CodexModelsResponse = {
-    success: boolean
-    models?: CodexModelSummary[]
-    error?: string
-}
-
-export type NativeCodexSessionSummary = {
-    codexSessionId: string
-    transcriptPath: string
-    cwd: string | null
-    title: string
-    createdAt: number
-    updatedAt: number
-    messageCount: number
-    userMessageCount: number
-    agentMessageCount: number
-    model?: string
-}
-
-export type NativeClaudeSessionSummary = {
-    claudeSessionId: string
-    transcriptPath: string
-    cwd: string | null
-    title: string
-    createdAt: number
-    updatedAt: number
-    messageCount: number
-    userMessageCount: number
-    agentMessageCount: number
-    model?: string
-}
-
-export type NativeCodexSessionsResponse = {
-    success: boolean
-    sessions?: NativeCodexSessionSummary[]
-    error?: string
-}
-
-export type NativeClaudeSessionsResponse = {
-    success: boolean
-    sessions?: NativeClaudeSessionSummary[]
-    error?: string
-}
-
-export type ImportNativeCodexSessionResponse =
-    | {
-        success: true
-        sessionId: string
-        codexSessionId: string
-        transcriptPath: string
-        importedMessages: number
-        skippedMessages: number
-    }
-    | {
-        success: false
-        error: string
-    }
-
-export type ImportNativeClaudeSessionResponse =
-    | {
-        success: true
-        sessionId: string
-        claudeSessionId: string
-        transcriptPath: string
-        importedMessages: number
-        skippedMessages: number
-    }
-    | {
-        success: false
-        error: string
-    }
 
 export type PushSubscriptionKeys = {
     p256dh: string

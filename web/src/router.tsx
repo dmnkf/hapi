@@ -1,8 +1,4 @@
 import { useCallback, useEffect, useMemo } from 'react'
-import type { CSSProperties } from 'react'
-import { useSwipeBack } from '@/hooks/useSwipeBack'
-import { usePullToRefresh } from '@/hooks/usePullToRefresh'
-import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { useQueryClient } from '@tanstack/react-query'
 import {
     Navigate,
@@ -15,6 +11,7 @@ import {
     useNavigate,
     useParams,
 } from '@tanstack/react-router'
+import { getScrollRestorationKey } from '@/lib/scrollRestorationKey'
 import { App } from '@/App'
 import { SessionChat } from '@/components/SessionChat'
 import { SessionList } from '@/components/SessionList'
@@ -22,9 +19,9 @@ import { NewSession } from '@/components/NewSession'
 import { WorkspaceBrowser } from '@/components/WorkspaceBrowser'
 import { LoadingState } from '@/components/LoadingState'
 import { useAppContext } from '@/lib/app-context'
-import { startViewTransition } from '@/lib/viewTransition'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
+import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { useMessages } from '@/hooks/queries/useMessages'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { useSession } from '@/hooks/queries/useSession'
@@ -37,9 +34,9 @@ import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
 import { clearDraftsAfterSend } from '@/lib/clearDraftsAfterSend'
+import { inactiveSessionCanResume } from '@/lib/sessionResume'
+import { markSessionSeen } from '@/lib/sessionLastSeen'
 import type { Machine } from '@/types/api'
-import { advanceFocusQueue, enterFocusQueue, exitFocusQueue, syncFocusIndexToSession } from '@/lib/focusQueue'
-import { useFocusQueue } from '@/hooks/useFocusQueue'
 import FilesPage from '@/routes/sessions/files'
 import FilePage from '@/routes/sessions/file'
 import TerminalPage from '@/routes/sessions/terminal'
@@ -141,60 +138,10 @@ function SessionsPage() {
     const handleRefresh = useCallback(() => {
         void refetch()
     }, [refetch])
-    const sidebar = useSidebarResize()
-    const {
-        containerRef: pullRef,
-        pullDistance,
-        isRefreshing: isPullRefreshing,
-        pastThreshold,
-        indicatorHeight,
-    } = usePullToRefresh(handleRefresh)
 
     const projectCount = useMemo(() => new Set(sessions.map(s =>
         s.metadata?.worktree?.basePath ?? s.metadata?.path ?? 'Other'
     )).size, [sessions])
-    const stats = useMemo(() => {
-        let active = 0
-        let pending = 0
-        let thinking = 0
-        for (const s of sessions) {
-            if (s.metadata?.archivedBy) continue
-            if (s.active) active++
-            if (s.pendingRequestsCount > 0) pending += s.pendingRequestsCount
-            if (s.thinking) thinking++
-        }
-        const connectedMachines = machines.filter(m => m.active).length
-        return { active, pending, thinking, connectedMachines }
-    }, [sessions, machines])
-
-    const enterFocus = useCallback(() => {
-        let machineFilter: string | null = null
-        try {
-            const stored = localStorage.getItem('hapi:sessionMachineFilter')
-            if (stored && stored !== 'all') machineFilter = stored
-        } catch { /* ignore */ }
-
-        const pendingIds = sessions
-            .filter(s => s.pendingRequestsCount > 0 && !s.metadata?.archivedBy)
-            .filter(s => {
-                if (!machineFilter) return true
-                const id = s.metadata?.machineId ?? '__unknown__'
-                return id === machineFilter
-            })
-            .sort((a, b) => b.updatedAt - a.updatedAt)
-            .map(s => s.id)
-
-        const first = enterFocusQueue(pendingIds)
-        if (first) {
-            startViewTransition(() =>
-                navigate({
-                    to: '/sessions/$sessionId',
-                    params: { sessionId: first },
-                    search: { focus: 1 },
-                })
-            )
-        }
-    }, [sessions, navigate])
     const machineLabelsById = useMemo(() => {
         const labels: Record<string, string> = {}
         for (const machine of machines) {
@@ -204,116 +151,68 @@ function SessionsPage() {
     }, [machines])
     const sessionMatch = matchRoute({ to: '/sessions/$sessionId', fuzzy: true })
     const selectedSessionId = sessionMatch && sessionMatch.sessionId !== 'new' ? sessionMatch.sessionId : null
+    const selectedSession = useMemo(
+        () => sessions.find((session) => session.id === selectedSessionId) ?? null,
+        [sessions, selectedSessionId]
+    )
+    useEffect(() => {
+        if (!selectedSessionId || !selectedSession) {
+            return
+        }
+        markSessionSeen(selectedSessionId, selectedSession.updatedAt)
+    }, [selectedSessionId, selectedSession?.updatedAt])
     const isSessionsIndex = pathname === '/sessions' || pathname === '/sessions/'
+    const sidebar = useSidebarResize()
+    const handleNewSessionInDirectory = useCallback((args: { machineId: string | null; directory: string }) => {
+        navigate({
+            to: '/sessions/new',
+            search: args.machineId
+                ? { directory: args.directory, machineId: args.machineId }
+                : { directory: args.directory }
+        })
+    }, [navigate])
 
     return (
         <div className="flex h-full min-h-0">
             <div
                 className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} w-full shrink-0 flex-col bg-[var(--app-bg)]`}
-                style={{ '--sidebar-w': `${sidebar.width}px` } as CSSProperties}
+                style={{ '--sidebar-w': `${sidebar.width}px` } as React.CSSProperties}
             >
-                <div className="glass-bar sticky top-0 z-20 border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
-                    <div className="mx-auto w-full max-w-content px-3 py-2">
-                        <div className="flex items-center justify-between">
-                            <div className="text-xs text-[var(--app-hint)]">
-                                {t('sessions.count', { n: sessions.length, m: projectCount })}
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => navigate({ to: '/browse' })}
-                                    className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
-                                    title={t('browse.nav')}
-                                >
-                                    <FolderOpenIcon className="h-5 w-5" />
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => navigate({ to: '/settings' })}
-                                    className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
-                                    title={t('settings.title')}
-                                >
-                                    <SettingsIcon className="h-5 w-5" />
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => navigate({ to: '/sessions/new' })}
-                                    className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors"
-                                    title={t('sessions.new')}
-                                >
-                                    <PlusIcon className="h-5 w-5" />
-                                </button>
-                            </div>
+                <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
+                    <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
+                        <div className="text-xs text-[var(--app-hint)]">
+                            {t('sessions.count', { n: sessions.length, m: projectCount })}
                         </div>
-                        {/* Dashboard summary */}
-                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-                            {stats.active > 0 ? (
-                                <span className="inline-flex items-center gap-1 text-[var(--app-badge-success-text)]">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-badge-success-text)]" />
-                                    {t('dashboard.active', { n: stats.active })}
-                                </span>
-                            ) : null}
-                            {stats.thinking > 0 ? (
-                                <span className="inline-flex items-center gap-1 text-[var(--app-accent-blue)] animate-pulse">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent-blue)]" />
-                                    {t('dashboard.thinking', { n: stats.thinking })}
-                                </span>
-                            ) : null}
-                            {stats.pending > 0 ? (
-                                <button
-                                    type="button"
-                                    onClick={enterFocus}
-                                    title={t('focus.enter')}
-                                    className="inline-flex items-center gap-1 rounded-full text-[var(--app-badge-warning-text)] transition-colors hover:bg-[var(--app-subtle-bg)] px-1.5 -mx-1.5 py-0.5"
-                                >
-                                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-badge-warning-text)]" />
-                                    {t('dashboard.pending', { n: stats.pending })}
-                                </button>
-                            ) : null}
-                            <span className="inline-flex items-center gap-1 text-[var(--app-hint)]">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
-                                {t('dashboard.machines', { n: stats.connectedMachines })}
-                            </span>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => navigate({ to: '/browse' })}
+                                className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
+                                title={t('browse.nav')}
+                            >
+                                <FolderOpenIcon className="h-5 w-5" />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => navigate({ to: '/settings' })}
+                                className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
+                                title={t('settings.title')}
+                            >
+                                <SettingsIcon className="h-5 w-5" />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => navigate({ to: '/sessions/new' })}
+                                className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors"
+                                title={t('sessions.new')}
+                            >
+                                <PlusIcon className="h-5 w-5" />
+                            </button>
                         </div>
                     </div>
                 </div>
 
-                <div ref={pullRef} className="app-scroll-y flex-1 min-h-0 desktop-scrollbar-left">
-                    {/* Pull-to-refresh indicator */}
-                    <div
-                        className="flex items-center justify-center overflow-hidden transition-[height] duration-200"
-                        style={{
-                            height: isPullRefreshing ? `${indicatorHeight}px` : `${pullDistance}px`,
-                            transition: pullDistance === 0 || isPullRefreshing ? 'height 0.2s ease-out' : 'none',
-                        }}
-                    >
-                        {(pullDistance > 0 || isPullRefreshing) && (
-                            <svg
-                                className={`h-5 w-5 text-[var(--app-hint)] ${isPullRefreshing ? 'animate-spin' : ''}`}
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                style={{
-                                    transform: isPullRefreshing ? undefined : `rotate(${pastThreshold ? 180 : 0}deg)`,
-                                    transition: 'transform 0.2s ease-out',
-                                }}
-                            >
-                                {isPullRefreshing ? (
-                                    <>
-                                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                                    </>
-                                ) : (
-                                    <>
-                                        <polyline points="7 13 12 18 17 13" />
-                                        <line x1="12" y1="6" x2="12" y2="18" />
-                                    </>
-                                )}
-                            </svg>
-                        )}
-                    </div>
+                <div className="app-scroll-y flex-1 min-h-0 desktop-scrollbar-left">
                     {error ? (
                         <div className="mx-auto w-full max-w-content px-3 py-2">
                             <div className="text-sm text-red-600">{error}</div>
@@ -322,11 +221,12 @@ function SessionsPage() {
                     <SessionList
                         sessions={sessions}
                         selectedSessionId={selectedSessionId}
-                        onSelect={(sessionId) => startViewTransition(() => navigate({
+                        onSelect={(sessionId) => navigate({
                             to: '/sessions/$sessionId',
                             params: { sessionId },
-                        }))}
+                        })}
                         onNewSession={() => navigate({ to: '/sessions/new' })}
+                        onNewSessionInDirectory={handleNewSessionInDirectory}
                         onBrowse={() => navigate({ to: '/browse' })}
                         onRefresh={handleRefresh}
                         isLoading={isLoading}
@@ -357,13 +257,7 @@ function SessionsIndexPage() {
     return null
 }
 
-function SessionPage(props: {
-    focusActive?: boolean
-    focusCurrent?: number
-    focusTotal?: number
-    onFocusNext?: () => void
-    onFocusExit?: () => void
-}) {
+function SessionPage() {
     const { api } = useAppContext()
     const { t } = useTranslation()
     const goBack = useAppGoBack()
@@ -373,10 +267,12 @@ function SessionPage(props: {
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
     const {
         session,
+        error: sessionError,
         refetch: refetchSession,
     } = useSession(api, sessionId)
     const {
         messages,
+        pendingMessages,
         warning: messagesWarning,
         isLoading: messagesLoading,
         isLoadingMore: messagesLoadingMore,
@@ -401,12 +297,15 @@ function SessionPage(props: {
             if (!api || !session || session.active) {
                 return currentSessionId
             }
+            if (!inactiveSessionCanResume(session, messages.length)) {
+                throw new Error(t('resume.unavailable.noTarget'))
+            }
             try {
                 return await api.resumeSession(currentSessionId, { permissionMode: session.permissionMode ?? undefined })
             } catch (error) {
-                const message = error instanceof Error ? error.message : 'Resume failed'
+                const message = error instanceof Error ? error.message : t('dialog.error.default')
                 addToast({
-                    title: 'Resume failed',
+                    title: t('resume.failed.title'),
                     body: message,
                     sessionId: currentSessionId,
                     url: ''
@@ -459,7 +358,7 @@ function SessionPage(props: {
     const {
         commands: slashCommands,
         getSuggestions: getSlashSuggestions,
-    } = useSlashCommands(api, sessionId, agentType, session)
+    } = useSlashCommands(api, sessionId, agentType)
     const {
         getSuggestions: getSkillSuggestions,
     } = useSkills(api, sessionId)
@@ -477,6 +376,30 @@ function SessionPage(props: {
     }, [refetchMessages, refetchSession])
 
     if (!session) {
+        if (sessionError) {
+            return (
+                <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
+                    <div className="text-sm font-medium text-[var(--app-fg)]">Session unavailable</div>
+                    <div className="max-w-md text-xs text-[var(--app-hint)]">{sessionError}</div>
+                    <div className="flex gap-2">
+                        <button
+                            type="button"
+                            onClick={() => navigate({ to: '/sessions', replace: true })}
+                            className="rounded-md border border-[var(--app-border)] px-3 py-1.5 text-sm text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)]"
+                        >
+                            Back to sessions
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => { void refetchSession() }}
+                            className="rounded-md bg-[var(--app-link)] px-3 py-1.5 text-sm text-white"
+                        >
+                            Retry
+                        </button>
+                    </div>
+                </div>
+            )
+        }
         return (
             <div className="flex-1 flex items-center justify-center p-4">
                 <LoadingState label="Loading session…" className="text-sm" />
@@ -489,6 +412,7 @@ function SessionPage(props: {
             api={api}
             session={session}
             messages={messages}
+            pendingMessages={pendingMessages}
             messagesWarning={messagesWarning}
             hasMoreMessages={messagesHasMore}
             isLoadingMessages={messagesLoading}
@@ -505,113 +429,35 @@ function SessionPage(props: {
             onRetryMessage={retryMessage}
             autocompleteSuggestions={getAutocompleteSuggestions}
             availableSlashCommands={slashCommands}
-            focusActive={props.focusActive}
-            focusCurrent={props.focusCurrent}
-            focusTotal={props.focusTotal}
-            onFocusNext={props.onFocusNext}
-            onFocusExit={props.onFocusExit}
         />
     )
 }
 
-function SwipeBackIndicator({ offset, progress }: { offset: number; progress: number }) {
-    if (offset <= 0) return null
-    return (
-        <div
-            className="fixed inset-0 z-50 pointer-events-none"
-            style={{ opacity: progress * 0.3 }}
-        >
-            <div
-                className="absolute left-0 top-0 h-full bg-[var(--app-fg)]"
-                style={{
-                    width: `${Math.min(offset, 80)}px`,
-                    opacity: progress,
-                    transition: offset === 0 ? 'all 150ms ease-out' : 'none',
-                }}
-            />
-            <div
-                className="absolute top-1/2 -translate-y-1/2 flex items-center justify-center"
-                style={{
-                    left: `${Math.min(offset - 24, 56)}px`,
-                    opacity: progress,
-                    transition: offset === 0 ? 'all 150ms ease-out' : 'none',
-                }}
-            >
-                <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="var(--app-bg)"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    style={{
-                        transform: `scale(${0.6 + progress * 0.4})`,
-                        transition: offset === 0 ? 'transform 150ms ease-out' : 'none',
-                    }}
-                >
-                    <polyline points="15 18 9 12 15 6" />
-                </svg>
-            </div>
-        </div>
-    )
-}
-
 function SessionDetailRoute() {
+    const { api } = useAppContext()
     const pathname = useLocation({ select: location => location.pathname })
-    const navigate = useNavigate()
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
+    const navigate = useNavigate()
+    const { notFound: sessionNotFound } = useSession(api, sessionId)
     const basePath = `/sessions/${sessionId}`
     const isChat = pathname === basePath || pathname === `${basePath}/`
-    const focusQueue = useFocusQueue()
-    const isFocusActive = focusQueue.active && focusQueue.ids.includes(sessionId)
 
     useEffect(() => {
-        if (isFocusActive) {
-            syncFocusIndexToSession(sessionId)
+        if (!sessionNotFound) {
+            return
         }
-    }, [sessionId, isFocusActive])
+        navigate({ to: '/sessions', replace: true })
+    }, [navigate, sessionNotFound])
 
-    const handleSwipeBack = useCallback(() => {
-        startViewTransition(() => navigate({ to: '/sessions' }), 'back')
-    }, [navigate])
-    const { containerRef: swipeRef, offset: swipeOffset, progress: swipeProgress } = useSwipeBack(handleSwipeBack)
-
-    const focusCurrent = isFocusActive ? focusQueue.ids.indexOf(sessionId) + 1 : 0
-    const focusTotal = isFocusActive ? focusQueue.ids.length : 0
-    const handleFocusNext = useCallback(() => {
-        const nextId = advanceFocusQueue(sessionId)
-        if (nextId) {
-            startViewTransition(() => navigate({
-                to: '/sessions/$sessionId',
-                params: { sessionId: nextId },
-                search: { focus: 1 },
-            }))
-        } else {
-            startViewTransition(() => navigate({ to: '/sessions' }))
-        }
-    }, [navigate, sessionId])
-    const handleFocusExit = useCallback(() => {
-        exitFocusQueue()
-        startViewTransition(() => navigate({
-            to: '/sessions/$sessionId',
-            params: { sessionId },
-            search: {},
-        }))
-    }, [navigate, sessionId])
-
-    return (
-        <div
-            ref={swipeRef}
-            className="flex h-full min-h-0 flex-col"
-        >
-            <SwipeBackIndicator offset={swipeOffset} progress={swipeProgress} />
-            <div className="flex-1 min-h-0">
-                {isChat ? <SessionPage focusActive={isFocusActive} focusCurrent={focusCurrent} focusTotal={focusTotal} onFocusNext={handleFocusNext} onFocusExit={handleFocusExit} /> : <Outlet />}
+    if (sessionNotFound) {
+        return (
+            <div className="flex-1 flex items-center justify-center p-4">
+                <LoadingState label="Session not found. Returning to sessions…" className="text-sm" />
             </div>
-        </div>
-    )
+        )
+    }
+
+    return isChat ? <SessionPage /> : <Outlet />
 }
 
 function NewSessionPage() {
@@ -653,12 +499,12 @@ function NewSessionPage() {
 
     return (
         <div className="flex h-full min-h-0 flex-col">
-            <div className="glass-bar sticky top-0 z-30 flex items-center gap-2 border-b border-[var(--app-divider)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+            <div className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
                 {!isTelegramApp() && (
                     <button
                         type="button"
                         onClick={goBack}
-                        className="flex h-11 w-11 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                     >
                         <BackIcon />
                     </button>
@@ -759,10 +605,6 @@ const sessionsIndexRoute = createRoute({
 const sessionDetailRoute = createRoute({
     getParentRoute: () => sessionsRoute,
     path: '$sessionId',
-    validateSearch: (search: Record<string, unknown>): { focus?: 1 } => {
-        const focus = search.focus === 1 || search.focus === '1' || search.focus === true
-        return focus ? { focus: 1 } : {}
-    },
     component: SessionDetailRoute,
 })
 
@@ -885,6 +727,7 @@ export function createAppRouter(history?: RouterHistory) {
         routeTree,
         history,
         scrollRestoration: true,
+        getScrollRestorationKey,
     })
 }
 

@@ -7,8 +7,15 @@ import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { CopyIcon, CheckIcon } from '@/components/icons'
+import { CopyIcon, CheckIcon, ScheduleIcon } from '@/components/icons'
+import { cn } from '@/lib/utils'
 import { useTranslation } from '@/lib/use-translation'
+import { DEFAULT_SESSION_PREVIEW_LIMIT, useSessionPreviewLimit } from '@/hooks/useSessionPreviewLimit'
+import { AgentFlavorIcon } from '@/components/AgentFlavorIcon'
+import { useSessionListStatusMode } from '@/hooks/useSessionListStatusMode'
+import { classifySessionAttention } from '@/lib/sessionAttention'
+import { getSessionLastSeenAt } from '@/lib/sessionLastSeen'
+import { getAttentionLabel, SessionAttentionIndicator } from '@/components/SessionAttentionIndicator'
 
 type SessionGroup = {
     key: string
@@ -90,6 +97,7 @@ function getGroupDisplayName(directory: string): string {
 }
 
 export const UNKNOWN_MACHINE_ID = '__unknown__'
+export const GROUP_SESSION_PREVIEW_LIMIT = DEFAULT_SESSION_PREVIEW_LIMIT
 
 export function deduplicateSessionsByAgentId(sessions: SessionSummary[], selectedSessionId?: string | null): SessionSummary[] {
     const byAgentId = new Map<string, SessionSummary[]>()
@@ -174,6 +182,29 @@ function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
         })
 }
 
+
+export function expandSelectedSessionCollapseOverrides(
+    overrides: Map<string, boolean>,
+    group: { key: string; machineId: string | null }
+): Map<string, boolean> {
+    const next = new Map(overrides)
+    let changed = false
+
+    // Expand project group if collapsed. Project and machine keys use true = collapsed.
+    if (overrides.has(group.key) && overrides.get(group.key)) {
+        next.delete(group.key)
+        changed = true
+    }
+
+    const machineKey = `machine::${group.machineId ?? UNKNOWN_MACHINE_ID}`
+    if (overrides.has(machineKey) && overrides.get(machineKey)) {
+        next.delete(machineKey)
+        changed = true
+    }
+
+    return changed ? next : overrides
+}
+
 function groupByMachine(
     groups: SessionGroup[],
     resolveMachineLabel: (id: string | null) => string
@@ -230,6 +261,47 @@ function CopyPathButton({ path, className }: { path: string; className?: string 
                 : <CopyIcon className="h-3.5 w-3.5" />
             }
         </button>
+    )
+}
+
+
+function SearchIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35" />
+        </svg>
+    )
+}
+
+function XIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+        </svg>
     )
 }
 
@@ -308,7 +380,7 @@ function ChevronIcon(props: { className?: string; collapsed?: boolean }) {
     )
 }
 
-function getSessionTitle(session: SessionSummary): string {
+export function getSessionTitle(session: SessionSummary): string {
     if (session.metadata?.name) {
         return session.metadata.name
     }
@@ -328,38 +400,89 @@ function getTodoProgress(session: SessionSummary): { completed: number; total: n
     return session.todoProgress
 }
 
-const FLAVOR_BADGES: Record<string, { label: string; colors: string }> = {
-    claude: {
-        label: 'Cl',
-        colors: 'bg-[#d97706] text-white',
-    },
-    codex: {
-        label: 'Cx',
-        colors: 'bg-[#111827] text-white',
-    },
-    cursor: {
-        label: 'Cu',
-        colors: 'bg-[#0f766e] text-white',
-    },
-    gemini: {
-        label: 'Gm',
-        colors: 'bg-[#2563eb] text-white',
-    },
-    opencode: {
-        label: 'Op',
-        colors: 'bg-[#15803d] text-white',
-    },
+export function normalizeSearch(value: string | null | undefined): string {
+    return (value ?? '').trim().toLowerCase()
 }
 
-function FlavorIcon({ flavor, className }: { flavor?: string | null; className?: string }) {
-    const badge = FLAVOR_BADGES[(flavor ?? 'claude').trim().toLowerCase()] ?? FLAVOR_BADGES.claude
+export function sessionMatchesQuery(session: SessionSummary, query: string, machineLabel: string): boolean {
+    if (!query) return true
+    const searchable = [
+        getSessionTitle(session),
+        session.id,
+        session.metadata?.path,
+        session.metadata?.worktree?.basePath,
+        session.metadata?.name,
+        session.metadata?.summary?.text,
+        session.metadata?.flavor,
+        machineLabel,
+    ]
+        .filter((part): part is string => typeof part === 'string' && part.length > 0)
+        .join('\n')
+        .toLowerCase()
+    return searchable.includes(query)
+}
+
+
+export function getVisibleSessionPreview(
+    sessions: SessionSummary[],
+    options: {
+        expanded?: boolean
+        selectedSessionId?: string | null
+        limit?: number
+    } = {}
+): SessionSummary[] {
+    const limit = options.limit ?? GROUP_SESSION_PREVIEW_LIMIT
+    if (options.expanded || sessions.length <= limit) return sessions
+
+    const requiredIds = new Set<string>()
+    for (const session of sessions) {
+        if (session.pendingRequestsCount > 0) requiredIds.add(session.id)
+    }
+    if (options.selectedSessionId && sessions.some(session => session.id === options.selectedSessionId)) {
+        requiredIds.add(options.selectedSessionId)
+    }
+
+    const visible: SessionSummary[] = sessions.filter((session, index) => {
+        return index < limit || requiredIds.has(session.id)
+    })
+
+    for (let index = visible.length - 1; visible.length > limit && index >= 0; index -= 1) {
+        const session = visible[index]
+        if (!session || requiredIds.has(session.id)) continue
+        visible.splice(index, 1)
+    }
+
+    return visible
+}
+
+function SessionListSearch(props: {
+    value: string
+    onChange: (value: string) => void
+}) {
+    const { t } = useTranslation()
     return (
-        <span
-            aria-hidden="true"
-            className={`inline-flex items-center justify-center rounded-sm text-[8px] font-semibold leading-none ${badge.colors} ${className ?? 'h-4 w-4'}`}
-        >
-            {badge.label}
-        </span>
+        <div className="relative px-3 pb-2">
+            <div className="pointer-events-none absolute inset-y-0 left-5 flex items-center pb-2 text-[var(--app-hint)]">
+                <SearchIcon className="h-3.5 w-3.5" />
+            </div>
+            <input
+                type="search"
+                value={props.value}
+                onChange={(event) => props.onChange(event.target.value)}
+                placeholder={t('sessions.search.placeholder')}
+                className="w-full appearance-none rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] py-1.5 pl-8 pr-8 text-sm text-[var(--app-fg)] outline-none transition-colors placeholder:text-[var(--app-hint)] focus:border-[var(--app-link)] [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden"
+            />
+            {props.value ? (
+                <button
+                    type="button"
+                    onClick={() => props.onChange('')}
+                    className="absolute inset-y-0 right-5 flex items-center pb-2 rounded p-0.5 text-[var(--app-hint)] hover:text-[var(--app-fg)]"
+                    title={t('sessions.search.clear')}
+                >
+                    <XIcon className="h-3.5 w-3.5" />
+                </button>
+            ) : null}
+        </div>
     )
 }
 
@@ -404,9 +527,10 @@ function SessionItem(props: {
     showPath?: boolean
     api: ApiClient | null
     selected?: boolean
+    showDetailedStatus?: boolean
 }) {
     const { t } = useTranslation()
-    const { session: s, onSelect, showPath = true, api, selected = false } = props
+    const { session: s, onSelect, showPath = true, api, selected = false, showDetailedStatus = false } = props
     const { haptic } = usePlatform()
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -436,6 +560,19 @@ function SessionItem(props: {
 
     const sessionName = getSessionTitle(s)
     const todoProgress = getTodoProgress(s)
+    const attention = useMemo(
+        () => showDetailedStatus
+            ? classifySessionAttention(s, {
+                selected,
+                lastSeenAt: getSessionLastSeenAt(s.id)
+            })
+            : null,
+        [s, selected, showDetailedStatus]
+    )
+    const attentionLabel = attention ? getAttentionLabel(attention, t) : null
+    const scheduledLabel = s.futureScheduledMessageCount > 1
+        ? t('session.item.scheduledMessages', { count: s.futureScheduledMessageCount })
+        : t('session.item.scheduledMessage')
     return (
         <>
             <button
@@ -447,12 +584,22 @@ function SessionItem(props: {
             >
                 <div className={`flex items-center justify-between gap-3 ${!s.active ? 'opacity-50' : ''}`}>
                     <div className="flex items-center gap-2 min-w-0">
-                        <FlavorIcon flavor={s.metadata?.flavor} className="h-4 w-4 shrink-0" />
+                        <AgentFlavorIcon flavor={s.metadata?.flavor} className="h-4 w-4 shrink-0" />
                         <div className={`truncate text-sm font-medium ${s.active ? 'text-[var(--app-fg)]' : 'text-[var(--app-hint)]'}`}>
                             {sessionName}
                         </div>
                         {s.active && s.thinking ? (
                             <LoaderIcon className="h-3.5 w-3.5 shrink-0 text-[var(--app-hint)] animate-spin-slow" />
+                        ) : attention ? (
+                            <SessionAttentionIndicator
+                                attention={attention}
+                                label={attentionLabel ?? ''}
+                            />
+                        ) : null}
+                        {showDetailedStatus && s.futureScheduledMessageCount > 0 ? (
+                            <span title={scheduledLabel} aria-label={scheduledLabel} className="inline-flex shrink-0">
+                                <ScheduleIcon className="h-3.5 w-3.5 text-[var(--app-hint)]" />
+                            </span>
                         ) : null}
                     </div>
                     <div className="flex items-center gap-2 shrink-0 text-xs">
@@ -462,7 +609,7 @@ function SessionItem(props: {
                                 {todoProgress.completed}/{todoProgress.total}
                             </span>
                         ) : null}
-                        {s.pendingRequestsCount > 0 ? (
+                        {!attention && s.pendingRequestsCount > 0 ? (
                             <span className="text-[var(--app-badge-warning-text)]">
                                 {t('session.item.pending')} {s.pendingRequestsCount}
                             </span>
@@ -528,6 +675,7 @@ export function SessionList(props: {
     sessions: SessionSummary[]
     onSelect: (sessionId: string) => void
     onNewSession: () => void
+    onNewSessionInDirectory?: (args: { machineId: string | null; directory: string }) => void
     onBrowse?: () => void
     onRefresh: () => void
     isLoading: boolean
@@ -537,15 +685,52 @@ export function SessionList(props: {
     selectedSessionId?: string | null
 }) {
     const { t } = useTranslation()
-    const { renderHeader = true, api, selectedSessionId, machineLabelsById = {} } = props
+    const { renderHeader = true, api, selectedSessionId, machineLabelsById = {}, onNewSessionInDirectory } = props
+    const { sessionPreviewLimit } = useSessionPreviewLimit()
+    const { sessionListStatusMode } = useSessionListStatusMode()
+    const showDetailedStatus = sessionListStatusMode === 'detailed'
+    const [searchQuery, setSearchQuery] = useState('')
+    const normalizedQuery = normalizeSearch(searchQuery)
+    const isSearching = normalizedQuery.length > 0
+
+    const resolveMachineLabel = (machineId: string | null): string => {
+        if (machineId && machineLabelsById[machineId]) {
+            return machineLabelsById[machineId]
+        }
+        if (machineId) {
+            return machineId.slice(0, 8)
+        }
+        return t('machine.unknown')
+    }
+
+    const allSessions = useMemo(
+        () => props.sessions,
+        [props.sessions]
+    )
+    const visibleSessions = useMemo(
+        () => isSearching
+            ? allSessions.filter(session => sessionMatchesQuery(
+                session,
+                normalizedQuery,
+                resolveMachineLabel(session.metadata?.machineId ?? null)
+            ))
+            : allSessions,
+        [allSessions, isSearching, normalizedQuery, machineLabelsById] // eslint-disable-line react-hooks/exhaustive-deps
+    )
+    const allGroups = useMemo(
+        () => groupSessionsByDirectory(allSessions),
+        [allSessions]
+    )
     const groups = useMemo(
-        () => groupSessionsByDirectory(deduplicateSessionsByAgentId(props.sessions, selectedSessionId)),
-        [props.sessions, selectedSessionId]
+        () => groupSessionsByDirectory(visibleSessions),
+        [visibleSessions]
     )
     const [collapseOverrides, setCollapseOverrides] = useState<Map<string, boolean>>(
         () => new Map()
     )
+    const autoExpandedSelectedSessionKeyRef = useRef<string | null>(null)
     const isGroupCollapsed = (group: SessionGroup): boolean => {
+        if (isSearching) return false
         const override = collapseOverrides.get(group.key)
         if (override !== undefined) return override
         const hasSelectedSession = selectedSessionId
@@ -562,14 +747,33 @@ export function SessionList(props: {
         })
     }
 
-    const resolveMachineLabel = (machineId: string | null): string => {
-        if (machineId && machineLabelsById[machineId]) {
-            return machineLabelsById[machineId]
-        }
-        if (machineId) {
-            return machineId.slice(0, 8)
-        }
-        return t('machine.unknown')
+    const isSessionGroupExpanded = (group: SessionGroup): boolean => {
+        if (isSearching || group.sessions.length <= sessionPreviewLimit) return true
+        const key = `sessions::${group.key}`
+        const override = collapseOverrides.get(key)
+        if (override !== undefined) return !override
+        return false
+    }
+
+    const toggleSessionGroup = (group: SessionGroup) => {
+        const key = `sessions::${group.key}`
+        const expanded = isSessionGroupExpanded(group)
+        setCollapseOverrides(prev => {
+            const next = new Map(prev)
+            next.set(key, expanded)
+            return next
+        })
+    }
+
+    const getVisibleGroupSessions = (group: SessionGroup): SessionSummary[] => {
+        return getVisibleSessionPreview(
+            group.sessions,
+            {
+                expanded: isSessionGroupExpanded(group),
+                selectedSessionId,
+                limit: sessionPreviewLimit
+            }
+        )
     }
 
     const machineGroups = useMemo(
@@ -578,6 +782,7 @@ export function SessionList(props: {
     )
 
     const isMachineCollapsed = (mg: MachineGroup): boolean => {
+        if (isSearching) return false
         const key = `machine::${mg.machineId ?? UNKNOWN_MACHINE_ID}`
         const override = collapseOverrides.get(key)
         if (override !== undefined) return override
@@ -597,30 +802,27 @@ export function SessionList(props: {
         })
     }
 
-    // Auto-expand group (and machine) containing selected session
+    // Auto-expand group (and machine) containing the selected session only when
+    // the selected-session/group pair changes. Without this guard, every live
+    // session-list refresh (for example tool-call updates from a running selected
+    // session) reopens a path the user just collapsed.
     useEffect(() => {
-        if (!selectedSessionId) return
-        setCollapseOverrides(prev => {
-            const group = groups.find(g =>
-                g.sessions.some(s => s.id === selectedSessionId)
-            )
-            if (!group) return prev
-            const next = new Map(prev)
-            let changed = false
-            // Expand project group if collapsed
-            if (prev.has(group.key) && prev.get(group.key)) {
-                next.delete(group.key)
-                changed = true
-            }
-            // Expand machine group if collapsed
-            const machineKey = `machine::${group.machineId ?? UNKNOWN_MACHINE_ID}`
-            if (prev.has(machineKey) && prev.get(machineKey)) {
-                next.delete(machineKey)
-                changed = true
-            }
-            return changed ? next : prev
-        })
-    }, [selectedSessionId, groups])
+        if (!selectedSessionId) {
+            autoExpandedSelectedSessionKeyRef.current = null
+            return
+        }
+
+        const group = allGroups.find(g =>
+            g.sessions.some(s => s.id === selectedSessionId)
+        )
+        if (!group) return
+
+        const autoExpandKey = `${selectedSessionId}::${group.key}`
+        if (autoExpandedSelectedSessionKeyRef.current === autoExpandKey) return
+        autoExpandedSelectedSessionKeyRef.current = autoExpandKey
+
+        setCollapseOverrides(prev => expandSelectedSessionCollapseOverrides(prev, group))
+    }, [selectedSessionId, allGroups])
 
     // Clean up stale collapse overrides
     useEffect(() => {
@@ -628,8 +830,9 @@ export function SessionList(props: {
             if (prev.size === 0) return prev
             const next = new Map(prev)
             const knownKeys = new Set<string>()
-            for (const g of groups) {
+            for (const g of allGroups) {
                 knownKeys.add(g.key)
+                knownKeys.add(`sessions::${g.key}`)
                 knownKeys.add(`machine::${g.machineId ?? UNKNOWN_MACHINE_ID}`)
             }
             let changed = false
@@ -641,14 +844,16 @@ export function SessionList(props: {
             }
             return changed ? next : prev
         })
-    }, [groups])
+    }, [allGroups])
 
     return (
         <div className="mx-auto w-full max-w-content flex flex-col">
             {renderHeader ? (
                 <div className="flex items-center justify-between px-3 py-1">
                     <div className="text-xs text-[var(--app-hint)]">
-                        {t('sessions.count', { n: props.sessions.length, m: groups.length })}
+                        {isSearching
+                            ? t('sessions.search.count', { n: visibleSessions.length, total: allSessions.length })
+                            : t('sessions.count', { n: props.sessions.length, m: allGroups.length })}
                     </div>
                     <button
                         type="button"
@@ -661,12 +866,22 @@ export function SessionList(props: {
                 </div>
             ) : null}
 
+            {props.sessions.length > 0 ? (
+                <SessionListSearch value={searchQuery} onChange={setSearchQuery} />
+            ) : null}
+
             {props.sessions.length === 0 && (
                 <SessionsEmptyState
                     onNewSession={props.onNewSession}
                     onBrowse={props.onBrowse}
                 />
             )}
+
+            {props.sessions.length > 0 && isSearching && visibleSessions.length === 0 ? (
+                <div className="px-4 py-8 text-center text-sm text-[var(--app-hint)]">
+                    {t('sessions.search.noResults')}
+                </div>
+            ) : null}
 
             <div className="flex flex-col gap-3 px-2 pt-1 pb-2">
                 {machineGroups.map((mg) => {
@@ -691,6 +906,10 @@ export function SessionList(props: {
                                 <div className="flex flex-col ml-3.5 pl-1 mt-0.5">
                                     {mg.projectGroups.map((group) => {
                                         const isCollapsed = isGroupCollapsed(group)
+                                        const visibleGroupSessions = getVisibleGroupSessions(group)
+                                        const hiddenSessionCount = group.sessions.length - visibleGroupSessions.length
+                                        const sessionGroupExpanded = isSessionGroupExpanded(group)
+                                        const canStartInGroupDirectory = group.directory !== 'Other'
                                         return (
                                             <div key={group.key}>
                                                 <div
@@ -703,6 +922,23 @@ export function SessionList(props: {
                                                         {group.displayName}
                                                     </span>
                                                     <CopyPathButton path={group.directory} className="opacity-0 group-hover/project:opacity-100 transition-opacity duration-150" />
+                                                    {onNewSessionInDirectory && canStartInGroupDirectory ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(event) => {
+                                                                event.stopPropagation()
+                                                                onNewSessionInDirectory({
+                                                                    machineId: group.machineId,
+                                                                    directory: group.directory
+                                                                })
+                                                            }}
+                                                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[var(--app-hint)] opacity-70 transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-link)] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                                                            title={t('sessions.group.new')}
+                                                            aria-label={t('sessions.group.new')}
+                                                        >
+                                                            <PlusIcon className="h-3.5 w-3.5" />
+                                                        </button>
+                                                    ) : null}
                                                     <span className="text-[11px] tabular-nums text-[var(--app-hint)] shrink-0">
                                                         ({group.sessions.length})
                                                     </span>
@@ -712,7 +948,7 @@ export function SessionList(props: {
                                                 <div className="collapsible-panel" data-open={!isCollapsed || undefined}>
                                                     <div className="collapsible-inner">
                                                     <div className="flex flex-col gap-0.5 ml-3 pl-1 pr-1 py-1">
-                                                        {group.sessions.map((s) => (
+                                                        {visibleGroupSessions.map((s) => (
                                                             <SessionItem
                                                                 key={s.id}
                                                                 session={s}
@@ -720,8 +956,23 @@ export function SessionList(props: {
                                                                 showPath={false}
                                                                 api={api}
                                                                 selected={s.id === selectedSessionId}
+                                                                showDetailedStatus={showDetailedStatus}
                                                             />
                                                         ))}
+                                                        {!isSearching && group.sessions.length > sessionPreviewLimit && (sessionGroupExpanded || hiddenSessionCount > 0) ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => toggleSessionGroup(group)}
+                                                                className={cn(
+                                                                    'mx-2 my-1 rounded-md px-2 py-1 text-left text-xs text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]',
+                                                                    hiddenSessionCount > 0 && 'border border-dashed border-[var(--app-border)]'
+                                                                )}
+                                                            >
+                                                                {sessionGroupExpanded
+                                                                    ? t('sessions.group.showLess')
+                                                                    : t('sessions.group.showMore', { n: hiddenSessionCount })}
+                                                            </button>
+                                                        ) : null}
                                                     </div>
                                                     </div>
                                                 </div>

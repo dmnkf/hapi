@@ -1,50 +1,49 @@
-import { getPermissionModesForFlavor, isPermissionModeAllowedForFlavor, toSessionSummary } from '@hapi/protocol'
-import { CodexCollaborationModeSchema, PermissionModeSchema } from '@hapi/protocol/schemas'
+import {
+    DeleteUploadRequestSchema,
+    getPermissionModesForFlavor,
+    isPermissionModeAllowedForFlavor,
+    RenameSessionRequestSchema,
+    ResumeSessionRequestSchema,
+    SessionCollaborationModeRequestSchema,
+    SessionEffortRequestSchema,
+    SessionModelReasoningEffortRequestSchema,
+    SessionModelRequestSchema,
+    SessionPermissionModeRequestSchema,
+    supportsModelChange,
+    toSessionSummary,
+    UploadFileRequestSchema
+} from '@hapi/protocol'
+import type { SlashCommand } from '@hapi/protocol/apiTypes'
 import { Hono } from 'hono'
-import { z } from 'zod'
 import type { SyncEngine, Session } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
 
-const permissionModeSchema = z.object({
-    mode: PermissionModeSchema
-})
-
-const resumeBodySchema = z.object({
-    permissionMode: PermissionModeSchema.optional()
-})
-
-const collaborationModeSchema = z.object({
-    mode: CodexCollaborationModeSchema
-})
-
-const modelSchema = z.object({
-    model: z.string().trim().min(1).nullable()
-})
-
-const modelReasoningEffortSchema = z.object({
-    modelReasoningEffort: z.string().trim().min(1).nullable()
-})
-
-const effortSchema = z.object({
-    effort: z.string().trim().min(1).nullable()
-})
-
-const renameSessionSchema = z.object({
-    name: z.string().min(1).max(255)
-})
-
-const uploadSchema = z.object({
-    filename: z.string().min(1).max(255),
-    content: z.string().min(1),
-    mimeType: z.string().min(1).max(255)
-})
-
-const uploadDeleteSchema = z.object({
-    path: z.string().min(1)
-})
-
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+function commandsFromMetadataSlashCommands(names: readonly string[] | undefined): SlashCommand[] {
+    if (!names?.length) {
+        return []
+    }
+
+    return names
+        .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+        .map((name) => ({
+            name,
+            source: 'builtin'
+        }))
+}
+
+function mergeSlashCommands(
+    primary: readonly SlashCommand[],
+    fallback: readonly SlashCommand[]
+): SlashCommand[] {
+    const commandMap = new Map<string, SlashCommand>()
+    for (const command of [...fallback, ...primary]) {
+        commandMap.set(command.name, command)
+    }
+    return Array.from(commandMap.values())
+}
 
 function estimateBase64Bytes(base64: string): number {
     const len = base64.length
@@ -65,7 +64,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         const getPendingCount = (s: Session) => s.agentState?.requests ? Object.keys(s.agentState.requests).length : 0
 
         const namespace = c.get('namespace')
-        const sessions = engine.getSessionsByNamespace(namespace)
+        const sessionRecords = engine.getSessionsByNamespace(namespace)
             .sort((a, b) => {
                 // Active sessions first
                 if (a.active !== b.active) {
@@ -80,7 +79,14 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
                 // Then by updatedAt
                 return b.updatedAt - a.updatedAt
             })
-            .map(toSessionSummary)
+        const scheduledCounts = engine.getFutureScheduledMessageCounts(sessionRecords.map((session) => session.id))
+        const sessions = sessionRecords.map((session) => {
+            const summary = toSessionSummary(session)
+            return {
+                ...summary,
+                futureScheduledMessageCount: scheduledCounts.get(session.id) ?? 0
+            }
+        })
 
         return c.json({ sessions })
     })
@@ -111,7 +117,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = body ? resumeBodySchema.safeParse(body) : { success: true as const, data: {} }
+        const parsed = body ? ResumeSessionRequestSchema.safeParse(body) : { success: true as const, data: {} }
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -134,7 +140,8 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             const status = result.code === 'no_machine_online' ? 503
                 : result.code === 'access_denied' ? 403
                     : result.code === 'session_not_found' ? 404
-                        : 500
+                        : result.code === 'resume_unavailable' ? 409
+                            : 500
             return c.json({ error: result.message, code: result.code }, status)
         }
 
@@ -153,7 +160,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = uploadSchema.safeParse(body)
+        const parsed = UploadFileRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -191,7 +198,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = uploadDeleteSchema.safeParse(body)
+        const parsed = DeleteUploadRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -228,7 +235,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return engine
         }
 
-        const sessionResult = requireSessionFromParam(c, engine)
+        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
         if (sessionResult instanceof Response) {
             return sessionResult
         }
@@ -264,7 +271,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = permissionModeSchema.safeParse(body)
+        const parsed = SessionPermissionModeRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -279,6 +286,9 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
 
         if (!isPermissionModeAllowedForFlavor(mode, flavor)) {
             return c.json({ error: 'Invalid permission mode for session flavor' }, 400)
+        }
+        if (flavor === 'opencode' && mode === 'plan' && sessionResult.session.agentState?.controlledByUser === true) {
+            return c.json({ error: 'OpenCode plan mode is only supported for remote sessions' }, 409)
         }
 
         try {
@@ -310,7 +320,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = collaborationModeSchema.safeParse(body)
+        const parsed = SessionCollaborationModeRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -336,25 +346,17 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = modelSchema.safeParse(body)
+        const parsed = SessionModelRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
 
         const flavor = sessionResult.session.metadata?.flavor ?? 'claude'
-        const runtimeModelIds = sessionResult.session.capabilities?.models?.map((model) => model.id) ?? []
-        if (flavor === 'codex') {
-            if (sessionResult.session.agentState?.controlledByUser === true) {
-                return c.json({ error: 'Model selection can only be changed for remote Codex sessions' }, 409)
-            }
-            if (runtimeModelIds.length === 0) {
-                return c.json({ error: 'Model selection requires runtime model capabilities for Codex sessions' }, 400)
-            }
-            if (parsed.data.model === null || !runtimeModelIds.includes(parsed.data.model)) {
-                return c.json({ error: 'Model is not advertised by the Codex runtime' }, 400)
-            }
-        } else if (flavor !== 'claude' && flavor !== 'gemini') {
-            return c.json({ error: 'Model selection is only supported for Claude, Gemini, and runtime-capable Codex sessions' }, 400)
+        if (!supportsModelChange(flavor)) {
+            return c.json({ error: 'Model selection is not supported for this session' }, 400)
+        }
+        if (flavor === 'codex' && sessionResult.session.agentState?.controlledByUser === true) {
+            return c.json({ error: 'Model selection can only be changed for remote Codex sessions' }, 409)
         }
 
         try {
@@ -378,15 +380,15 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const flavor = sessionResult.session.metadata?.flavor ?? 'claude'
-        if (flavor !== 'codex') {
-            return c.json({ error: 'Model reasoning effort is only supported for Codex sessions' }, 400)
+        if (flavor !== 'codex' && flavor !== 'opencode') {
+            return c.json({ error: 'Model reasoning effort is only supported for Codex and OpenCode sessions' }, 400)
         }
         if (sessionResult.session.agentState?.controlledByUser === true) {
-            return c.json({ error: 'Model reasoning effort can only be changed for remote Codex sessions' }, 409)
+            return c.json({ error: 'Model reasoning effort can only be changed for remote sessions' }, 409)
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = modelReasoningEffortSchema.safeParse(body)
+        const parsed = SessionModelReasoningEffortRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -414,7 +416,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = effortSchema.safeParse(body)
+        const parsed = SessionEffortRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -445,7 +447,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = renameSessionSchema.safeParse(body)
+        const parsed = RenameSessionRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body: name is required' }, 400)
         }
@@ -503,18 +505,32 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return sessionResult
         }
 
-        const runtimeCommands = sessionResult.session.runtimeSlashCommands?.commands
-        if (runtimeCommands && runtimeCommands.length > 0) {
-            return c.json({ success: true, commands: runtimeCommands })
-        }
-
         // Get agent type from session metadata, default to 'claude'
         const agent = sessionResult.session.metadata?.flavor ?? 'claude'
 
+        const metadataCommands = commandsFromMetadataSlashCommands(
+            sessionResult.session.metadata?.slashCommands
+        )
+
         try {
             const result = await engine.listSlashCommands(sessionResult.sessionId, agent)
+            if (result.success && result.commands) {
+                return c.json({
+                    ...result,
+                    commands: mergeSlashCommands(result.commands, metadataCommands)
+                })
+            }
+
+            if (metadataCommands.length > 0) {
+                return c.json({ success: true, commands: metadataCommands })
+            }
+
             return c.json(result)
         } catch (error) {
+            if (metadataCommands.length > 0) {
+                return c.json({ success: true, commands: metadataCommands })
+            }
+
             return c.json({
                 success: false,
                 error: error instanceof Error ? error.message : 'Failed to list slash commands'
@@ -535,7 +551,10 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         try {
-            const result = await engine.listSkills(sessionResult.sessionId)
+            const result = await engine.listSkills(
+                sessionResult.sessionId,
+                sessionResult.session.metadata?.flavor ?? 'claude'
+            )
             return c.json(result)
         } catch (error) {
             return c.json({
@@ -571,6 +590,66 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return c.json({
                 success: false,
                 error: error instanceof Error ? error.message : 'Failed to list Codex models'
+            }, 500)
+        }
+    })
+
+    app.get('/sessions/:id/opencode-models', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+
+        const flavor = sessionResult.session.metadata?.flavor ?? 'claude'
+        if (flavor !== 'opencode') {
+            return c.json({
+                success: false,
+                error: 'OpenCode models are only available for OpenCode sessions'
+            }, 400)
+        }
+
+        try {
+            const result = await engine.listOpencodeModelsForSession(sessionResult.sessionId)
+            return c.json(result)
+        } catch (error) {
+            return c.json({
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to list OpenCode models'
+            }, 500)
+        }
+    })
+
+    app.get('/sessions/:id/cursor-models', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+
+        const flavor = sessionResult.session.metadata?.flavor ?? 'claude'
+        if (flavor !== 'cursor') {
+            return c.json({
+                success: false,
+                error: 'Cursor models are only available for Cursor sessions'
+            }, 400)
+        }
+
+        try {
+            const result = await engine.listCursorModelsForSession(sessionResult.sessionId)
+            return c.json(result)
+        } catch (error) {
+            return c.json({
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to list Cursor models'
             }, 500)
         }
     })

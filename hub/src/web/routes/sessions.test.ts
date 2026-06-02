@@ -52,6 +52,7 @@ function createSession(overrides?: Partial<Session>): Session {
 
 function createApp(session: Session, opts?: {
     resumeSession?: (sessionId: string, namespace: string, resumeOpts?: { permissionMode?: string }) => Promise<{ type: string; sessionId?: string; message?: string; code?: string }>
+    listSlashCommands?: SyncEngine['listSlashCommands']
 }) {
     const applySessionConfigCalls: Array<[string, Record<string, unknown>]> = []
     const applySessionConfig = async (sessionId: string, config: Record<string, unknown>) => {
@@ -63,12 +64,34 @@ function createApp(session: Session, opts?: {
             { id: 'gpt-5.5', displayName: 'GPT-5.5', isDefault: true }
         ]
     })
+    const listOpencodeModelsForSession = async () => ({
+        success: true,
+        availableModels: [
+            { modelId: 'ollama/exaone:4.5-33b-q8', name: 'Ollama (SER8)/EXAONE 4.5 33B Q8' },
+            { modelId: 'mlx/qwen3:0.6b', name: 'MLX/Qwen3 0.6B' }
+        ],
+        currentModelId: 'ollama/exaone:4.5-33b-q8'
+    })
+    const listCursorModelsForSession = async () => ({
+        success: true,
+        availableModels: [
+            { modelId: 'composer-2.5', name: 'Composer 2.5' },
+            { modelId: 'gpt-5.5-high-fast', name: 'GPT-5.5 High Fast' }
+        ],
+        currentModelId: 'composer-2.5'
+    })
     const resumeSession = opts?.resumeSession ?? (async (sessionId: string) => ({ type: 'success', sessionId }))
     const engine = {
         resolveSessionAccess: () => ({ ok: true, sessionId: session.id, session }),
         applySessionConfig,
         listCodexModelsForSession,
-        resumeSession
+        listCursorModelsForSession,
+        listOpencodeModelsForSession,
+        resumeSession,
+        listSlashCommands: opts?.listSlashCommands ?? (async () => ({
+            success: true,
+            commands: []
+        }))
     } as Partial<SyncEngine>
 
     const app = new Hono<WebAppEnv>()
@@ -144,7 +167,7 @@ describe('sessions routes', () => {
         ])
     })
 
-    it('rejects model reasoning effort changes for non-Codex sessions', async () => {
+    it('rejects model reasoning effort changes for unsupported sessions', async () => {
         const session = createSession({
             metadata: {
                 path: '/tmp/project',
@@ -162,7 +185,7 @@ describe('sessions routes', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Model reasoning effort is only supported for Codex sessions'
+            error: 'Model reasoning effort is only supported for Codex and OpenCode sessions'
         })
         expect(applySessionConfigCalls).toEqual([])
     })
@@ -185,7 +208,7 @@ describe('sessions routes', () => {
 
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({
-            error: 'Model reasoning effort can only be changed for remote Codex sessions'
+            error: 'Model reasoning effort can only be changed for remote sessions'
         })
         expect(applySessionConfigCalls).toEqual([])
     })
@@ -206,28 +229,49 @@ describe('sessions routes', () => {
         ])
     })
 
-    it('rejects model changes for Codex sessions without runtime model capabilities', async () => {
+
+
+    it('applies model reasoning effort changes for remote OpenCode sessions', async () => {
+        const session = createSession({
+            metadata: {
+                path: '/tmp/project',
+                host: 'localhost',
+                flavor: 'opencode'
+            }
+        })
+        const { app, applySessionConfigCalls } = createApp(session)
+
+        const response = await app.request('/api/sessions/session-1/model-reasoning-effort', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ modelReasoningEffort: 'high' })
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ ok: true })
+        expect(applySessionConfigCalls).toEqual([
+            ['session-1', { modelReasoningEffort: 'high' }]
+        ])
+    })
+
+    it('applies model changes for remote Codex sessions', async () => {
         const { app, applySessionConfigCalls } = createApp(createSession())
 
         const response = await app.request('/api/sessions/session-1/model', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ model: 'gpt-runtime-fast' })
+            body: JSON.stringify({ model: 'gpt-5.5' })
         })
 
-        expect(response.status).toBe(400)
-        expect(await response.json()).toEqual({
-            error: 'Model selection requires runtime model capabilities for Codex sessions'
-        })
-        expect(applySessionConfigCalls).toEqual([])
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ ok: true })
+        expect(applySessionConfigCalls).toEqual([
+            ['session-1', { model: 'gpt-5.5' }]
+        ])
     })
 
     it('rejects model changes for local Codex sessions', async () => {
         const session = createSession({
-            capabilities: {
-                models: [{ id: 'gpt-runtime-fast' }],
-                source: 'dynamic'
-            },
             agentState: {
                 controlledByUser: true,
                 requests: {},
@@ -239,7 +283,7 @@ describe('sessions routes', () => {
         const response = await app.request('/api/sessions/session-1/model', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ model: 'gpt-runtime-fast' })
+            body: JSON.stringify({ model: 'gpt-5.5' })
         })
 
         expect(response.status).toBe(409)
@@ -249,11 +293,12 @@ describe('sessions routes', () => {
         expect(applySessionConfigCalls).toEqual([])
     })
 
-    it('applies model changes for remote Codex sessions with runtime model capabilities', async () => {
+    it('applies model changes for OpenCode sessions', async () => {
         const session = createSession({
-            capabilities: {
-                models: [{ id: 'gpt-runtime-fast' }],
-                source: 'dynamic'
+            metadata: {
+                path: '/tmp/project',
+                host: 'localhost',
+                flavor: 'opencode'
             }
         })
         const { app, applySessionConfigCalls } = createApp(session)
@@ -261,21 +306,22 @@ describe('sessions routes', () => {
         const response = await app.request('/api/sessions/session-1/model', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ model: 'gpt-runtime-fast' })
+            body: JSON.stringify({ model: 'ollama/exaone:4.5-33b-q8' })
         })
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ ok: true })
         expect(applySessionConfigCalls).toEqual([
-            ['session-1', { model: 'gpt-runtime-fast' }]
+            ['session-1', { model: 'ollama/exaone:4.5-33b-q8' }]
         ])
     })
 
-    it('rejects Codex model changes that are not advertised by runtime capabilities', async () => {
+    it('applies model changes for Gemini sessions (regression: opencode addition does not break Gemini)', async () => {
         const session = createSession({
-            capabilities: {
-                models: [{ id: 'gpt-runtime-fast' }],
-                source: 'dynamic'
+            metadata: {
+                path: '/tmp/project',
+                host: 'localhost',
+                flavor: 'gemini'
             }
         })
         const { app, applySessionConfigCalls } = createApp(session)
@@ -283,14 +329,35 @@ describe('sessions routes', () => {
         const response = await app.request('/api/sessions/session-1/model', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ model: 'stale-static-model' })
+            body: JSON.stringify({ model: 'gemini-2.5-pro' })
         })
 
-        expect(response.status).toBe(400)
-        expect(await response.json()).toEqual({
-            error: 'Model is not advertised by the Codex runtime'
+        expect(response.status).toBe(200)
+        expect(applySessionConfigCalls).toEqual([
+            ['session-1', { model: 'gemini-2.5-pro' }]
+        ])
+    })
+
+    it('applies model changes for Cursor sessions', async () => {
+        const session = createSession({
+            metadata: {
+                path: '/tmp/project',
+                host: 'localhost',
+                flavor: 'cursor'
+            }
         })
-        expect(applySessionConfigCalls).toEqual([])
+        const { app, applySessionConfigCalls } = createApp(session)
+
+        const response = await app.request('/api/sessions/session-1/model', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ model: 'sonnet' })
+        })
+
+        expect(response.status).toBe(200)
+        expect(applySessionConfigCalls).toEqual([
+            ['session-1', { model: 'sonnet' }]
+        ])
     })
 
     it('rejects effort changes for non-Claude sessions', async () => {
@@ -344,6 +411,103 @@ describe('sessions routes', () => {
                 { id: 'gpt-5.5', displayName: 'GPT-5.5', isDefault: true }
             ]
         })
+    })
+
+    it('returns OpenCode models for active OpenCode sessions', async () => {
+        const session = createSession({
+            metadata: { path: '/tmp/project', host: 'localhost', flavor: 'opencode' }
+        })
+        const { app } = createApp(session)
+
+        const response = await app.request('/api/sessions/session-1/opencode-models')
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            success: true,
+            availableModels: [
+                { modelId: 'ollama/exaone:4.5-33b-q8', name: 'Ollama (SER8)/EXAONE 4.5 33B Q8' },
+                { modelId: 'mlx/qwen3:0.6b', name: 'MLX/Qwen3 0.6B' }
+            ],
+            currentModelId: 'ollama/exaone:4.5-33b-q8'
+        })
+    })
+
+    it('returns Cursor models for active Cursor sessions', async () => {
+        const session = createSession({
+            metadata: { path: '/tmp/project', host: 'localhost', flavor: 'cursor' }
+        })
+        const { app } = createApp(session)
+
+        const response = await app.request('/api/sessions/session-1/cursor-models')
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            success: true,
+            availableModels: [
+                { modelId: 'composer-2.5', name: 'Composer 2.5' },
+                { modelId: 'gpt-5.5-high-fast', name: 'GPT-5.5 High Fast' }
+            ],
+            currentModelId: 'composer-2.5'
+        })
+    })
+
+    it('rejects cursor-models for non-Cursor sessions', async () => {
+        const { app } = createApp(createSession())
+
+        const response = await app.request('/api/sessions/session-1/cursor-models')
+
+        expect(response.status).toBe(400)
+    })
+
+    it('rejects opencode-models for non-OpenCode sessions', async () => {
+        const { app } = createApp(createSession())
+
+        const response = await app.request('/api/sessions/session-1/opencode-models')
+
+        expect(response.status).toBe(400)
+    })
+
+    it('rejects OpenCode plan mode changes for local sessions', async () => {
+        const session = createSession({
+            metadata: { path: '/tmp/project', host: 'localhost', flavor: 'opencode' },
+            agentState: {
+                controlledByUser: true,
+                requests: {},
+                completedRequests: {}
+            }
+        })
+        const { app, applySessionConfigCalls } = createApp(session)
+
+        const response = await app.request('/api/sessions/session-1/permission-mode', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ mode: 'plan' })
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'OpenCode plan mode is only supported for remote sessions'
+        })
+        expect(applySessionConfigCalls).toEqual([])
+    })
+
+    it('applies OpenCode plan mode changes for remote sessions', async () => {
+        const session = createSession({
+            metadata: { path: '/tmp/project', host: 'localhost', flavor: 'opencode' }
+        })
+        const { app, applySessionConfigCalls } = createApp(session)
+
+        const response = await app.request('/api/sessions/session-1/permission-mode', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ mode: 'plan' })
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ ok: true })
+        expect(applySessionConfigCalls).toEqual([
+            ['session-1', { permissionMode: 'plan' }]
+        ])
     })
 
     it('applies permission mode changes for inactive sessions', async () => {
@@ -404,4 +568,92 @@ describe('sessions routes', () => {
         expect(response.status).toBe(200)
         expect(capturedResumeOpts).toEqual({ permissionMode: 'bypassPermissions' })
     })
+
+    it('returns 409 when resume token is unavailable', async () => {
+        const session = createSession({
+            active: false,
+            metadata: { path: '/tmp/project', host: 'localhost', flavor: 'cursor' }
+        })
+        const { app } = createApp(session, {
+            resumeSession: async () => ({
+                type: 'error',
+                message: 'Resume session ID unavailable. Start a new session in this directory, or retry after the agent has initialized.',
+                code: 'resume_unavailable'
+            })
+        })
+
+        const response = await app.request('/api/sessions/session-1/resume', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Resume session ID unavailable. Start a new session in this directory, or retry after the agent has initialized.',
+            code: 'resume_unavailable'
+        })
+    })
+
+    it('falls back to metadata slash commands when RPC listing fails', async () => {
+        const session = createSession({
+            metadata: {
+                path: '/tmp/project',
+                host: 'localhost',
+                flavor: 'claude',
+                slashCommands: ['help', 'memory', 'status']
+            }
+        })
+        const { app } = createApp(session, {
+            listSlashCommands: async () => {
+                throw new Error('RPC unavailable')
+            }
+        })
+
+        const response = await app.request('/api/sessions/session-1/slash-commands')
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            success: true,
+            commands: [
+                { name: 'help', source: 'builtin' },
+                { name: 'memory', source: 'builtin' },
+                { name: 'status', source: 'builtin' }
+            ]
+        })
+    })
+
+    it('merges RPC and metadata slash commands without hiding built-ins', async () => {
+        const session = createSession({
+            metadata: {
+                path: '/tmp/project',
+                host: 'localhost',
+                flavor: 'claude',
+                slashCommands: ['help', 'memory']
+            }
+        })
+        const { app } = createApp(session, {
+            listSlashCommands: async () => ({
+                success: true,
+                commands: [
+                    { name: 'clear', source: 'builtin' },
+                    { name: 'project-only', source: 'project', content: 'Project prompt' }
+                ]
+            })
+        })
+
+        const response = await app.request('/api/sessions/session-1/slash-commands')
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            success: true,
+            commands: [
+                { name: 'help', source: 'builtin' },
+                { name: 'memory', source: 'builtin' },
+                { name: 'clear', source: 'builtin' },
+                { name: 'project-only', source: 'project', content: 'Project prompt' }
+            ]
+        })
+    })
+
 })

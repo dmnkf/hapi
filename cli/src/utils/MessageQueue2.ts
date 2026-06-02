@@ -108,6 +108,43 @@ export class MessageQueue2<T> {
     }
 
     /**
+     * Push a message that must be processed in isolation, preserving any
+     * messages already queued ahead of it. The new message is never batched
+     * with siblings (neither the ones before it, nor any that arrive after).
+     * Use this when a slash command must run alone but earlier prompts must
+     * still be delivered in order.
+     */
+    pushIsolated(message: string, mode: T, localId?: string): void {
+        if (this.closed) {
+            throw new Error('Cannot push to closed queue');
+        }
+
+        const modeHash = this.modeHasher(mode);
+        logger.debug(`[MessageQueue2] pushIsolated() called with mode hash: ${modeHash} - preserving ${this.queue.length} pending messages`);
+
+        this.queue.push({
+            message,
+            mode,
+            modeHash,
+            localId,
+            isolate: true
+        });
+
+        if (this.onMessageHandler) {
+            this.onMessageHandler(message, mode);
+        }
+
+        if (this.waiter) {
+            logger.debug(`[MessageQueue2] Notifying waiter for isolated message`);
+            const waiter = this.waiter;
+            this.waiter = null;
+            waiter(true);
+        }
+
+        logger.debug(`[MessageQueue2] pushIsolated() completed. Queue size: ${this.queue.length}`);
+    }
+
+    /**
      * Push a message that must be processed in complete isolation.
      * Clears any pending messages and ensures this message is never batched with others.
      * Used for special commands that require dedicated processing.
@@ -180,6 +217,20 @@ export class MessageQueue2<T> {
         }
 
         logger.debug(`[MessageQueue2] unshift() completed. Queue size: ${this.queue.length}`);
+    }
+
+    /**
+     * Remove the first queued message that matches the given localId.
+     * Returns true if a message was removed, false if not found.
+     * Best-effort: if the CLI is offline when cancel is issued, the message
+     * may already have been collected for invocation and won't be found here.
+     */
+    cancelByLocalId(localId: string): boolean {
+        if (!localId) return false;
+        const idx = this.queue.findIndex(item => item.localId === localId);
+        if (idx === -1) return false;
+        this.queue.splice(idx, 1);
+        return true;
     }
 
     /**

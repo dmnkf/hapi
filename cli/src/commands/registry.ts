@@ -1,12 +1,13 @@
 import { authCommand } from './auth'
 import { claudeCommand } from './claude'
 import { codexCommand } from './codex'
-import { codexAcpCommand } from './codexAcp'
 import { cursorCommand } from './cursor'
 import { connectCommand } from './connect'
 import { runnerCommand } from './runner'
+import { resumeCommand } from './resume'
 import { doctorCommand } from './doctor'
 import { geminiCommand } from './gemini'
+import { kimiCommand } from './kimi'
 import { opencodeCommand } from './opencode'
 import { hookForwarderCommand } from './hookForwarder'
 import { mcpCommand } from './mcp'
@@ -18,15 +19,16 @@ const COMMANDS: CommandDefinition[] = [
     authCommand,
     connectCommand,
     codexCommand,
-    codexAcpCommand,
     cursorCommand,
     geminiCommand,
+    kimiCommand,
     opencodeCommand,
     mcpCommand,
     hubCommand,
     { ...hubCommand, name: 'server' },
     hookForwarderCommand,
     doctorCommand,
+    resumeCommand,
     runnerCommand,
     notifyCommand
 ]

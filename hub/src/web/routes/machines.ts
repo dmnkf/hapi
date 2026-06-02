@@ -1,41 +1,12 @@
+import {
+    MachineListDirectoryRequestSchema,
+    MachinePathsExistsRequestSchema,
+    SpawnSessionRequestSchema
+} from '@hapi/protocol'
 import { Hono } from 'hono'
-import { z } from 'zod'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireMachine } from './guards'
-
-const spawnBodySchema = z.object({
-    directory: z.string().min(1),
-    agent: z.enum(['claude', 'codex', 'cursor', 'gemini', 'opencode']).optional(),
-    model: z.string().optional(),
-    effort: z.string().optional(),
-    modelReasoningEffort: z.string().optional(),
-    yolo: z.boolean().optional(),
-    sessionType: z.enum(['simple', 'worktree']).optional(),
-    worktreeName: z.string().optional()
-})
-
-const listDirectorySchema = z.object({
-    path: z.string().min(1)
-})
-
-const pathsExistsSchema = z.object({
-    paths: z.array(z.string().min(1)).max(1000)
-})
-
-const importNativeCodexSessionSchema = z.object({
-    codexSessionId: z.string().min(1).optional(),
-    transcriptPath: z.string().min(1).optional()
-}).refine((value) => Boolean(value.codexSessionId || value.transcriptPath), {
-    message: 'codexSessionId or transcriptPath is required'
-})
-
-const importNativeClaudeSessionSchema = z.object({
-    claudeSessionId: z.string().min(1).optional(),
-    transcriptPath: z.string().min(1).optional()
-}).refine((value) => Boolean(value.claudeSessionId || value.transcriptPath), {
-    message: 'claudeSessionId or transcriptPath is required'
-})
 
 export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
@@ -64,7 +35,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = spawnBodySchema.safeParse(body)
+        const parsed = SpawnSessionRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -97,7 +68,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = z.object({ path: z.string().min(1) }).safeParse(body)
+        const parsed = MachineListDirectoryRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -123,7 +94,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = pathsExistsSchema.safeParse(body)
+        const parsed = MachinePathsExistsRequestSchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -164,7 +135,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
     })
 
-    app.get('/machines/:id/native-codex-sessions', async (c) => {
+    app.get('/machines/:id/opencode-models', async (c) => {
         const engine = getSyncEngine()
         if (!engine) {
             return c.json({ success: false, error: 'Not connected' }, 503)
@@ -176,18 +147,23 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return machine
         }
 
+        const cwd = (c.req.query('cwd') ?? '').trim()
+        if (!cwd) {
+            return c.json({ success: false, error: 'cwd query parameter is required' }, 400)
+        }
+
         try {
-            const result = await engine.listNativeCodexSessions(machineId)
+            const result = await engine.listOpencodeModelsForCwd(machineId, cwd)
             return c.json(result)
         } catch (error) {
             return c.json({
                 success: false,
-                error: error instanceof Error ? error.message : 'Failed to list native Codex sessions'
+                error: error instanceof Error ? error.message : 'Failed to list OpenCode models'
             }, 500)
         }
     })
 
-    app.get('/machines/:id/native-claude-sessions', async (c) => {
+    app.get('/machines/:id/cursor-models', async (c) => {
         const engine = getSyncEngine()
         if (!engine) {
             return c.json({ success: false, error: 'Not connected' }, 503)
@@ -200,70 +176,12 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         try {
-            const result = await engine.listNativeClaudeSessions(machineId)
+            const result = await engine.listCursorModelsForMachine(machineId)
             return c.json(result)
         } catch (error) {
             return c.json({
                 success: false,
-                error: error instanceof Error ? error.message : 'Failed to list native Claude sessions'
-            }, 500)
-        }
-    })
-
-    app.post('/machines/:id/native-codex-sessions/import', async (c) => {
-        const engine = getSyncEngine()
-        if (!engine) {
-            return c.json({ success: false, error: 'Not connected' }, 503)
-        }
-
-        const machineId = c.req.param('id')
-        const machine = requireMachine(c, engine, machineId)
-        if (machine instanceof Response) {
-            return machine
-        }
-
-        const body = await c.req.json().catch(() => null)
-        const parsed = importNativeCodexSessionSchema.safeParse(body)
-        if (!parsed.success) {
-            return c.json({ success: false, error: 'Invalid body' }, 400)
-        }
-
-        try {
-            const result = await engine.importNativeCodexSession(machineId, parsed.data)
-            return c.json(result)
-        } catch (error) {
-            return c.json({
-                success: false,
-                error: error instanceof Error ? error.message : 'Failed to import native Codex session'
-            }, 500)
-        }
-    })
-
-    app.post('/machines/:id/native-claude-sessions/import', async (c) => {
-        const engine = getSyncEngine()
-        if (!engine) {
-            return c.json({ success: false, error: 'Not connected' }, 503)
-        }
-
-        const machineId = c.req.param('id')
-        const machine = requireMachine(c, engine, machineId)
-        if (machine instanceof Response) {
-            return machine
-        }
-
-        const body = await c.req.json().catch(() => null)
-        const parsed = importNativeClaudeSessionSchema.safeParse(body)
-        if (!parsed.success) {
-            return c.json({ success: false, error: 'Invalid body' }, 400)
-        }
-
-        try {
-            const result = await engine.importNativeClaudeSession(machineId, parsed.data)
-            return c.json(result)
-        } catch (error) {
-            return c.json({
-                success: false,
-                error: error instanceof Error ? error.message : 'Failed to import native Claude session'
+                error: error instanceof Error ? error.message : 'Failed to list Cursor models'
             }, 500)
         }
     })

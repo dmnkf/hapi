@@ -22,10 +22,10 @@ import { startRunnerControlServer } from './controlServer';
 import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
 import { join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
-import { resolveWorkspaceRoot } from '@/utils/workspaceRoot';
+import { resolveWorkspaceRoots } from '@/utils/workspaceRoot';
 import { hashRunnerCliApiToken } from './runnerIdentity';
 
-export async function startRunner(options: { workspaceRoot?: string } = {}): Promise<void> {
+export async function startRunner(options: { workspaceRoots?: string[] } = {}): Promise<void> {
   // We don't have cleanup function at the time of server construction
   // Control flow is:
   // 1. Create promise that will resolve when shutdown is requested
@@ -685,14 +685,14 @@ export async function startRunner(options: { workspaceRoot?: string } = {}): Pro
     // Create API client
     const api = await ApiClient.create();
 
-    const workspaceRoot = resolveWorkspaceRoot(options.workspaceRoot);
-    logger.debug(`[RUNNER RUN] Workspace root: ${workspaceRoot ?? '(not set)'}`);
+    const workspaceRoots = resolveWorkspaceRoots(options.workspaceRoots);
+    logger.debug(`[RUNNER RUN] Workspace roots: ${workspaceRoots?.join(', ') ?? '(not set)'}`);
 
     // Get or create machine (with retry for transient connection errors)
     const machine = await withRetry(
       () => api.getOrCreateMachine({
         machineId,
-        metadata: buildMachineMetadata({ workspaceRoot }),
+        metadata: buildMachineMetadata({ workspaceRoots }),
         runnerState: initialRunnerState
       }),
       {
@@ -709,7 +709,7 @@ export async function startRunner(options: { workspaceRoot?: string } = {}): Pro
     logger.debug(`[RUNNER RUN] Machine registered: ${machine.id}`);
 
     // Create realtime machine session
-    const apiMachine = api.machineSyncClient(machine, { workspaceRoot });
+    const apiMachine = api.machineSyncClient(machine, { workspaceRoots });
 
     // Set RPC handlers
     apiMachine.setRPCHandlers({
@@ -725,7 +725,7 @@ export async function startRunner(options: { workspaceRoot?: string } = {}): Pro
     // regardless of the verbose/quiet logger setting.
     console.log('');
     console.log('Hapi runner started.');
-    console.log(`  Workspace root: ${workspaceRoot ?? '(not set — browse disabled; pass --workspace-root to enable)'}`);
+    console.log(`  Workspace roots: ${workspaceRoots?.join(', ') ?? '(not set — browse disabled; pass --workspace-root to enable)'}`);
     console.log(`  Hub URL:        ${configuration.apiUrl}`);
     console.log(`  Machine ID:     ${machine.id}`);
     console.log(`  Control port:   ${controlPort}`);
@@ -911,9 +911,11 @@ export function buildCliArgs(
       ? 'cursor'
       : agent === 'gemini'
         ? 'gemini'
-        : agent === 'opencode'
-          ? 'opencode'
-          : 'claude';
+        : agent === 'kimi'
+          ? 'kimi'
+          : agent === 'opencode'
+            ? 'opencode'
+            : 'claude';
   const args = [agentCommand];
   if (options.resumeSessionId) {
     if (agent === 'codex') {
@@ -925,13 +927,13 @@ export function buildCliArgs(
     }
   }
   args.push('--hapi-starting-mode', 'remote', '--started-by', 'runner');
-  if (options.model && agent !== 'opencode') {
+  if (options.model) {
     args.push('--model', options.model);
   }
   if (options.effort && agent === 'claude') {
     args.push('--effort', options.effort);
   }
-  if (options.modelReasoningEffort && agent === 'codex') {
+  if (options.modelReasoningEffort && (agent === 'codex' || agent === 'opencode')) {
     args.push('--model-reasoning-effort', options.modelReasoningEffort);
   }
   if (options.permissionMode && (PERMISSION_MODES as readonly string[]).includes(options.permissionMode)) {

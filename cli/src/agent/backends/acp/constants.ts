@@ -4,7 +4,5 @@ export const ACP_SESSION_UPDATE_TYPES = {
     toolCall: 'tool_call',
     toolCallUpdate: 'tool_call_update',
     plan: 'plan',
-    availableCommandsUpdate: 'available_commands_update',
-    currentModeUpdate: 'current_mode_update',
-    configOptionUpdate: 'config_option_update'
+    usageUpdate: 'usage_update'
 } as const;

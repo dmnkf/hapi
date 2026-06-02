@@ -1,6 +1,5 @@
 import { AgentStateSchema, MetadataSchema, TeamStateSchema } from '@hapi/protocol/schemas'
-import type { SessionCapabilities, SessionRuntimeSlashCommands } from '@hapi/protocol'
-import type { CodexCollaborationMode, PermissionMode, Session } from '@hapi/protocol/types'
+import type { CodexCollaborationMode, PermissionMode, Session, SessionPatch } from '@hapi/protocol/types'
 import type { Store } from '../store'
 import { clampAliveTime } from './aliveTime'
 import { EventPublisher } from './eventPublisher'
@@ -146,10 +145,8 @@ export class SessionCache {
             model: stored.model,
             modelReasoningEffort: stored.modelReasoningEffort,
             effort: stored.effort,
-            permissionMode: existing?.permissionMode,
-            collaborationMode: existing?.collaborationMode,
-            capabilities: existing?.capabilities,
-            runtimeSlashCommands: existing?.runtimeSlashCommands
+            permissionMode: existing?.permissionMode ?? metadata?.preferredPermissionMode,
+            collaborationMode: existing?.collaborationMode
         }
 
         this.sessions.set(sessionId, session)
@@ -202,6 +199,7 @@ export class SessionCache {
         }
         if (payload.permissionMode !== undefined) {
             session.permissionMode = payload.permissionMode
+            this.persistPreferredPermissionMode(session, payload.permissionMode)
         }
         if (payload.model !== undefined) {
             if (payload.model !== session.model) {
@@ -257,9 +255,25 @@ export class SessionCache {
                     modelReasoningEffort: session.modelReasoningEffort,
                     effort: session.effort,
                     collaborationMode: session.collaborationMode
-                }
+                } satisfies SessionPatch
             })
         }
+    }
+
+    /**
+     * Drop the queued-message thinking grace timer for a session.
+     *
+     * `markMessageQueued` sets a 15s grace during which we keep `thinking=true`
+     * even if the CLI sends `keepAlive(thinking=false)` — that grace exists to
+     * cover the gap between the user POSTing a prompt and the CLI starting to
+     * stream. Sessions that handle the message synchronously (e.g. slash
+     * commands intercepted in `onUserMessage`) never call onThinkingChange and
+     * would otherwise leave the spinner stuck for the full grace window. The
+     * messages-consumed socket event signals the CLI has finished its
+     * synchronous handling, so it's safe to drop the grace.
+     */
+    clearQueuedThinkingGrace(sessionId: string): void {
+        this.pendingThinkingUntilBySessionId.delete(sessionId)
     }
 
     markMessageQueued(sessionId: string, time: number = Date.now()): void {
@@ -284,7 +298,7 @@ export class SessionCache {
                 data: {
                     thinking: true,
                     updatedAt: session.updatedAt
-                }
+                } satisfies SessionPatch
             })
         }
     }
@@ -301,29 +315,7 @@ export class SessionCache {
         this.publisher.emit({
             type: 'session-updated',
             sessionId,
-            data: { backgroundTaskCount: next }
-        })
-    }
-
-    handleSessionCapabilities(sessionId: string, capabilities: SessionCapabilities): void {
-        const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
-        if (!session) return
-        session.capabilities = capabilities
-        this.publisher.emit({
-            type: 'session-updated',
-            sessionId,
-            data: { capabilities }
-        })
-    }
-
-    handleSessionSlashCommands(sessionId: string, slashCommands: SessionRuntimeSlashCommands): void {
-        const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
-        if (!session) return
-        session.runtimeSlashCommands = slashCommands
-        this.publisher.emit({
-            type: 'session-updated',
-            sessionId,
-            data: { runtimeSlashCommands: slashCommands }
+            data: { backgroundTaskCount: next } satisfies SessionPatch
         })
     }
 
@@ -357,7 +349,7 @@ export class SessionCache {
             type: 'session-updated',
             sessionId,
             namespace: session.namespace,
-            data: { updatedAt: session.updatedAt }
+            data: { updatedAt: session.updatedAt } satisfies SessionPatch
         })
     }
 
@@ -377,7 +369,11 @@ export class SessionCache {
         session.backgroundTaskCount = 0
         this.pendingThinkingUntilBySessionId.delete(session.id)
 
-        this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false, thinking: false, backgroundTaskCount: 0 } })
+        this.publisher.emit({
+            type: 'session-updated',
+            sessionId: session.id,
+            data: { active: false, thinking: false, backgroundTaskCount: 0 } satisfies SessionPatch
+        })
     }
 
     expireInactive(now: number = Date.now()): string[] {
@@ -391,7 +387,11 @@ export class SessionCache {
             session.thinking = false
             this.pendingThinkingUntilBySessionId.delete(session.id)
             expired.push(session.id)
-            this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false } })
+            this.publisher.emit({
+                type: 'session-updated',
+                sessionId: session.id,
+                data: { active: false } satisfies SessionPatch
+            })
         }
 
         return expired
@@ -414,6 +414,7 @@ export class SessionCache {
 
         if (config.permissionMode !== undefined) {
             session.permissionMode = config.permissionMode
+            this.persistPreferredPermissionMode(session, config.permissionMode)
         }
         if (config.model !== undefined) {
             if (config.model !== session.model) {
@@ -453,41 +454,6 @@ export class SessionCache {
         }
 
         this.publisher.emit({ type: 'session-updated', sessionId, data: session })
-    }
-
-    async markSessionArchived(sessionId: string): Promise<void> {
-        const session = this.sessions.get(sessionId)
-        if (!session) {
-            throw new Error('Session not found')
-        }
-
-        const currentMetadata = session.metadata ?? { path: '', host: '' }
-        if (currentMetadata.archivedBy) {
-            return
-        }
-        const newMetadata = {
-            ...currentMetadata,
-            archivedBy: 'user',
-            archiveReason: 'User archived'
-        }
-
-        const result = this.store.sessions.updateSessionMetadata(
-            sessionId,
-            newMetadata,
-            session.metadataVersion,
-            session.namespace,
-            { touchUpdatedAt: false }
-        )
-
-        if (result.result === 'error') {
-            throw new Error('Failed to mark session archived')
-        }
-        if (result.result === 'version-mismatch') {
-            // Another writer raced with us — harmless, next fetch will reflect truth.
-            return
-        }
-
-        this.refreshSession(sessionId)
     }
 
     async renameSession(sessionId: string, name: string): Promise<void> {
@@ -730,8 +696,40 @@ export class SessionCache {
             merged.host = oldObj.host
             changed = true
         }
+        if (typeof oldObj.preferredPermissionMode === 'string' && typeof newObj.preferredPermissionMode !== 'string') {
+            merged.preferredPermissionMode = oldObj.preferredPermissionMode
+            changed = true
+        }
 
         return changed ? merged : newMetadata
+    }
+
+    private persistPreferredPermissionMode(session: Session, permissionMode: PermissionMode): void {
+        const currentMetadata = session.metadata
+        if (!currentMetadata || currentMetadata.preferredPermissionMode === permissionMode) {
+            return
+        }
+
+        const nextMetadata = { ...currentMetadata, preferredPermissionMode: permissionMode }
+        const result = this.store.sessions.updateSessionMetadata(
+            session.id,
+            nextMetadata,
+            session.metadataVersion,
+            session.namespace,
+            { touchUpdatedAt: false }
+        )
+
+        if (result.result === 'error') {
+            return
+        }
+
+        const parsed = MetadataSchema.safeParse(result.value)
+        if (!parsed.success) {
+            return
+        }
+
+        session.metadata = parsed.data
+        session.metadataVersion = result.version
     }
 
     private mergeAgentState(oldState: unknown | null, newState: unknown | null): unknown | null {

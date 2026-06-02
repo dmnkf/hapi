@@ -1,4 +1,3 @@
-import type { SessionCapabilities, SessionRuntimeSlashCommands } from '@hapi/protocol'
 import type { CodexCollaborationMode, PermissionMode } from '@hapi/protocol/types'
 import type { Store, StoredMachine, StoredSession } from '../../../store'
 import type { RpcRegistry } from '../../rpcRegistry'
@@ -40,16 +39,16 @@ export type CliHandlersDeps = {
     terminalRegistry: TerminalRegistry
     onSessionAlive?: (payload: SessionAlivePayload) => void
     onSessionEnd?: (payload: SessionEndPayload) => void
-    onSessionCapabilities?: (sessionId: string, capabilities: SessionCapabilities) => void
-    onSessionSlashCommands?: (sessionId: string, slashCommands: SessionRuntimeSlashCommands) => void
     onMachineAlive?: (payload: MachineAlivePayload) => void
     onWebappEvent?: (event: SyncEvent) => void
     onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
     onSessionActivity?: (sessionId: string, updatedAt: number) => void
+    onSweepImmediateQueued?: (sessionId: string, now: number) => void
+    onMessagesConsumed?: (sessionId: string) => void
 }
 
 export function registerCliHandlers(socket: CliSocketWithData, deps: CliHandlersDeps): void {
-    const { io, store, rpcRegistry, terminalRegistry, onSessionAlive, onSessionEnd, onSessionCapabilities, onSessionSlashCommands, onMachineAlive, onWebappEvent, onBackgroundTaskDelta, onSessionActivity } = deps
+    const { io, store, rpcRegistry, terminalRegistry, onSessionAlive, onSessionEnd, onMachineAlive, onWebappEvent, onBackgroundTaskDelta, onSessionActivity, onSweepImmediateQueued, onMessagesConsumed } = deps
     const terminalNamespace = io.of('/terminal')
     const namespace = typeof socket.data.namespace === 'string' ? socket.data.namespace : null
 
@@ -108,11 +107,11 @@ export function registerCliHandlers(socket: CliSocketWithData, deps: CliHandlers
         emitAccessError,
         onSessionAlive,
         onSessionEnd,
-        onSessionCapabilities,
-        onSessionSlashCommands,
         onWebappEvent,
         onBackgroundTaskDelta,
-        onSessionActivity
+        onSessionActivity,
+        onSweepImmediateQueued,
+        onMessagesConsumed
     })
     registerMachineHandlers(socket, {
         store,

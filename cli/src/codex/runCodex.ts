@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger';
+import { randomUUID } from 'node:crypto';
 import { loop, type EnhancedMode, type PermissionMode } from './loop';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
@@ -6,13 +7,18 @@ import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler'
 import type { AgentState } from '@/api/types';
 import type { CodexSession } from './session';
 import { parseCodexCliOverrides } from './utils/codexCliOverrides';
-import { bootstrapSession } from '@/agent/sessionFactory';
+import { bootstrapExistingSession, bootstrapSession } from '@/agent/sessionFactory';
+import { registerLocalHandoffHandler } from '@/agent/localHandoff';
 import { createModeChangeHandler, createRunnerLifecycle, setControlledByUser } from '@/agent/runnerLifecycle';
 import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
+import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import { CodexCollaborationModeSchema, PermissionModeSchema } from '@hapi/protocol/schemas';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { getInvokedCwd } from '@/utils/invokedCwd';
 import type { ReasoningEffort } from './appServerTypes';
+import { parseCodexSpecialCommand } from './codexSpecialCommands';
+import { listSlashCommands } from '@/modules/common/slashCommands';
+import { resolveCodexSlashCommand } from './utils/slashCommands';
 
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 
@@ -25,8 +31,11 @@ export async function runCodex(opts: {
     resumeSessionId?: string;
     model?: string;
     modelReasoningEffort?: ReasoningEffort;
+    collaborationMode?: EnhancedMode['collaborationMode'];
+    existingSessionId?: string;
+    workingDirectory?: string;
 }): Promise<void> {
-    const workingDirectory = getInvokedCwd();
+    const workingDirectory = opts.workingDirectory ?? getInvokedCwd();
     const startedBy = opts.startedBy ?? 'terminal';
 
     logger.debug(`[codex] Starting with options: startedBy=${startedBy}`);
@@ -34,14 +43,22 @@ export async function runCodex(opts: {
     let state: AgentState = {
         controlledByUser: false
     };
-    const { api, session } = await bootstrapSession({
-        flavor: 'codex',
-        startedBy,
-        workingDirectory,
-        agentState: state,
-        model: opts.model,
-        modelReasoningEffort: opts.modelReasoningEffort
-    });
+    const bootstrap = opts.existingSessionId
+        ? await bootstrapExistingSession({
+            sessionId: opts.existingSessionId,
+            flavor: 'codex',
+            startedBy,
+            workingDirectory
+        })
+        : await bootstrapSession({
+            flavor: 'codex',
+            startedBy,
+            workingDirectory,
+            agentState: state,
+            model: opts.model,
+            modelReasoningEffort: opts.modelReasoningEffort
+        });
+    const { api, session } = bootstrap;
 
     const startingMode: 'local' | 'remote' = startedBy === 'runner' ? 'remote' : 'local';
 
@@ -60,7 +77,7 @@ export async function runCodex(opts: {
     let currentPermissionMode: PermissionMode = opts.permissionMode ?? 'default';
     let currentModel = opts.model;
     let currentModelReasoningEffort: ReasoningEffort | undefined = opts.modelReasoningEffort;
-    let currentCollaborationMode: EnhancedMode['collaborationMode'] = 'default';
+    let currentCollaborationMode: EnhancedMode['collaborationMode'] = opts.collaborationMode ?? 'default';
 
     const lifecycle = createRunnerLifecycle({
         session,
@@ -70,6 +87,7 @@ export async function runCodex(opts: {
 
     lifecycle.registerProcessHandlers();
     registerKillSessionHandler(session.rpcHandlerManager, lifecycle.cleanupAndExit);
+    registerLocalHandoffHandler(session.rpcHandlerManager, lifecycle);
 
     const applyCurrentConfigToSession = (options?: { syncModel?: boolean }) => {
         const sessionInstance = sessionWrapperRef.current;
@@ -89,7 +107,29 @@ export async function runCodex(opts: {
         );
     };
 
-    session.onUserMessage((message, localId) => {
+    const applySlashUpdates = (updates: {
+        permissionMode?: PermissionMode;
+        model?: string | null;
+        modelReasoningEffort?: ReasoningEffort | null;
+        collaborationMode?: EnhancedMode['collaborationMode'];
+    } | undefined): void => {
+        if (!updates) return;
+        if (updates.permissionMode !== undefined) {
+            currentPermissionMode = updates.permissionMode;
+        }
+        if (updates.model !== undefined) {
+            currentModel = updates.model ?? undefined;
+        }
+        if (updates.modelReasoningEffort !== undefined) {
+            currentModelReasoningEffort = updates.modelReasoningEffort ?? undefined;
+        }
+        if (updates.collaborationMode !== undefined) {
+            currentCollaborationMode = updates.collaborationMode;
+        }
+        applyCurrentConfigToSession();
+    };
+
+    const syncCurrentConfigFromSession = (): void => {
         const sessionPermissionMode = sessionWrapperRef.current?.getPermissionMode();
         if (sessionPermissionMode && isPermissionModeAllowedForFlavor(sessionPermissionMode, 'codex')) {
             currentPermissionMode = sessionPermissionMode as PermissionMode;
@@ -106,22 +146,104 @@ export async function runCodex(opts: {
         if (sessionCollaborationMode) {
             currentCollaborationMode = sessionCollaborationMode;
         }
+    };
 
-        const messagePermissionMode = currentPermissionMode;
-        logger.debug(
-            `[Codex] User message received with permission mode: ${currentPermissionMode}, ` +
-            `model: ${currentModel ?? 'auto'}, modelReasoningEffort: ${currentModelReasoningEffort ?? 'default'}, ` +
-            `collaborationMode: ${currentCollaborationMode}`
-        );
+    let userMessageChain: Promise<void> = Promise.resolve();
+    session.onUserMessage((message, localId) => {
+        userMessageChain = userMessageChain.then(async () => {
+            try {
+                syncCurrentConfigFromSession();
+                let text = message.content.text;
+                let isolatedCommandText: string | null = null;
+                const commands = await listSlashCommands('codex', workingDirectory).catch(() => []);
+                const slash = resolveCodexSlashCommand(text, {
+                    commands,
+                    permissionMode: currentPermissionMode,
+                    collaborationMode: currentCollaborationMode,
+                    model: currentModel,
+                    modelReasoningEffort: currentModelReasoningEffort
+                });
+                if (slash.kind === 'goal') {
+                    if (slash.message) {
+                        session.sendAgentMessage({
+                            type: 'message',
+                            message: slash.message,
+                            id: randomUUID()
+                        });
+                    }
+                    const goalCommand = slash.action === 'set'
+                        ? `/goal ${slash.objective ?? ''}`
+                        : slash.action === 'show'
+                            ? '/goal'
+                            : `/goal ${slash.action}`;
+                    messageQueue.pushIsolateAndClear(goalCommand, {
+                        permissionMode: currentPermissionMode ?? 'default',
+                        model: currentModel,
+                        modelReasoningEffort: currentModelReasoningEffort,
+                        collaborationMode: currentCollaborationMode
+                    }, localId);
+                    return;
+                }
+                if (slash.kind !== 'passthrough') {
+                    applySlashUpdates(slash.updates);
+                    if (slash.message) {
+                        session.sendAgentMessage({
+                            type: 'message',
+                            message: slash.message,
+                            id: randomUUID()
+                        });
+                    }
+                    if (slash.kind === 'handled') {
+                        if (localId) session.emitMessagesConsumed([localId]);
+                        return;
+                    }
+                    text = slash.text;
+                } else {
+                    const specialCommand = parseCodexSpecialCommand(message.content.text);
+                    if (specialCommand.type) {
+                        logger.debug(`[Codex] Detected special command: ${specialCommand.type}`);
+                        isolatedCommandText = message.content.text.trim();
+                    }
+                }
+                text = formatMessageWithAttachments(text, message.content.attachments);
 
-        const enhancedMode: EnhancedMode = {
-            permissionMode: messagePermissionMode ?? 'default',
-            model: currentModel,
-            modelReasoningEffort: currentModelReasoningEffort,
-            collaborationMode: currentCollaborationMode
-        };
-        const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
-        messageQueue.push(formattedText, enhancedMode, localId);
+                const messagePermissionMode = currentPermissionMode;
+                logger.debug(
+                    `[Codex] User message received with permission mode: ${currentPermissionMode}, ` +
+                    `model: ${currentModel ?? 'auto'}, modelReasoningEffort: ${currentModelReasoningEffort ?? 'default'}, ` +
+                    `collaborationMode: ${currentCollaborationMode}`
+                );
+
+                const enhancedMode: EnhancedMode = {
+                    permissionMode: messagePermissionMode ?? 'default',
+                    model: currentModel,
+                    modelReasoningEffort: currentModelReasoningEffort,
+                    collaborationMode: currentCollaborationMode
+                };
+                if (isolatedCommandText) {
+                    messageQueue.pushIsolateAndClear(isolatedCommandText, enhancedMode, localId);
+                    return;
+                }
+                messageQueue.push(text, enhancedMode, localId);
+            } catch (error) {
+                logger.debug('[Codex] Failed to handle user message', error);
+                const enhancedMode: EnhancedMode = {
+                    permissionMode: currentPermissionMode ?? 'default',
+                    model: currentModel,
+                    modelReasoningEffort: currentModelReasoningEffort,
+                    collaborationMode: currentCollaborationMode
+                };
+                messageQueue.push(formatMessageWithAttachments(message.content.text, message.content.attachments), enhancedMode, localId);
+            }
+        }).catch((error) => {
+            logger.debug('[Codex] User message handler chain failed', error);
+        });
+    });
+
+    session.onCancelQueuedMessage((localId) => {
+        const removed = messageQueue.cancelByLocalId(localId);
+        logger.debug(`[codex] cancelByLocalId(${localId}): ${removed ? 'removed' : 'not found (best-effort)'}`);
+        return removed;
     });
 
     const formatFailureReason = (message: string): string => {
@@ -161,26 +283,22 @@ export async function runCodex(opts: {
         return value as ReasoningEffort;
     };
 
-    const resolveModel = (value: unknown): string | undefined => {
-        if (value === null) {
-            return undefined;
-        }
-        if (typeof value !== 'string' || value.trim().length === 0) {
+    const resolveModel = (value: unknown): string => {
+        if (typeof value !== 'string') {
             throw new Error('Invalid model');
         }
-        return value.trim();
+        const trimmedValue = value.trim();
+        if (!trimmedValue) {
+            throw new Error('Invalid model');
+        }
+        return trimmedValue;
     };
 
-    session.rpcHandlerManager.registerHandler('set-session-config', async (payload: unknown) => {
+    session.rpcHandlerManager.registerHandler(RPC_METHODS.SetSessionConfig, async (payload: unknown) => {
         if (!payload || typeof payload !== 'object') {
             throw new Error('Invalid session config payload');
         }
-        const config = payload as {
-            permissionMode?: unknown;
-            model?: unknown;
-            modelReasoningEffort?: unknown;
-            collaborationMode?: unknown;
-        };
+        const config = payload as { permissionMode?: unknown; model?: unknown; modelReasoningEffort?: unknown; collaborationMode?: unknown };
 
         if (config.permissionMode !== undefined) {
             currentPermissionMode = resolvePermissionMode(config.permissionMode);

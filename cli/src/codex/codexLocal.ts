@@ -3,10 +3,12 @@ import { spawnWithTerminalGuard } from '@/utils/spawnWithTerminalGuard';
 import {
     buildMcpServerConfigArgs,
     buildDeveloperInstructionsArg,
-    buildSessionStartHookConfigArgs
+    buildSessionStartHookConfigArgs,
+    buildModelReasoningEffortConfigArgs
 } from './utils/codexMcpConfig';
 import { codexSystemPrompt } from './utils/systemPrompt';
 import type { ReasoningEffort } from './appServerTypes';
+import { resolveCodexCommand } from './utils/codexExecutable';
 
 /**
  * Filter out 'resume' subcommand which is managed internally by hapi.
@@ -54,7 +56,7 @@ export async function codexLocal(opts: {
     }
 
     if (opts.modelReasoningEffort) {
-        args.push('--model-reasoning-effort', opts.modelReasoningEffort);
+        args.push(...buildModelReasoningEffortConfigArgs(opts.modelReasoningEffort));
     }
 
     if (opts.sandbox) {
@@ -85,9 +87,11 @@ export async function codexLocal(opts: {
         return;
     }
 
+    const codexCommand = resolveCodexCommand();
+
     await spawnWithTerminalGuard({
-        command: 'codex',
-        args,
+        command: codexCommand.command,
+        args: [...codexCommand.args, ...args],
         cwd: opts.path,
         env: process.env,
         signal: opts.abort,

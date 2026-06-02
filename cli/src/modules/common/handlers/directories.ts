@@ -1,25 +1,14 @@
 import { logger } from '@/ui/logger'
 import { readdir, stat } from 'fs/promises'
-import { basename, join, resolve, isAbsolute } from 'path'
+import { basename, join, resolve } from 'path'
+import type { DirectoryEntry, ListDirectoryResponse } from '@hapi/protocol/apiTypes'
+import { RPC_METHODS } from '@hapi/protocol/rpcMethods'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { validatePath } from '../pathSecurity'
 import { getErrorMessage, rpcError } from '../rpcResponses'
 
 interface ListDirectoryRequest {
     path: string
-}
-
-interface DirectoryEntry {
-    name: string
-    type: 'file' | 'directory' | 'other'
-    size?: number
-    modified?: number
-}
-
-interface ListDirectoryResponse {
-    success: boolean
-    entries?: DirectoryEntry[]
-    error?: string
 }
 
 interface GetDirectoryTreeRequest {
@@ -42,38 +31,19 @@ interface GetDirectoryTreeResponse {
     error?: string
 }
 
-export interface DirectoryHandlerOptions {
-    allowAbsoluteAccess?: boolean
-}
-
-function resolveDirectoryPath(targetPath: string, workingDirectory: string, allowAbsoluteAccess: boolean): string {
-    if (allowAbsoluteAccess && isAbsolute(targetPath)) {
-        return resolve(targetPath)
-    }
-
-    return resolve(workingDirectory, targetPath)
-}
-
-export function registerDirectoryHandlers(
-    rpcHandlerManager: RpcHandlerManager,
-    workingDirectory: string,
-    options?: DirectoryHandlerOptions
-): void {
-    const allowAbsoluteAccess = options?.allowAbsoluteAccess === true
-    rpcHandlerManager.registerHandler<ListDirectoryRequest, ListDirectoryResponse>('listDirectory', async (data) => {
+export function registerDirectoryHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
+    rpcHandlerManager.registerHandler<ListDirectoryRequest, ListDirectoryResponse>(RPC_METHODS.ListDirectory, async (data) => {
         logger.debug('List directory request:', data.path)
 
         const targetPath = data.path || '.'
 
-        const validation = allowAbsoluteAccess
-            ? { valid: true }
-            : validatePath(targetPath, workingDirectory)
+        const validation = validatePath(targetPath, workingDirectory)
         if (!validation.valid) {
             return rpcError(validation.error ?? 'Invalid directory path')
         }
 
         try {
-            const resolvedPath = resolveDirectoryPath(targetPath, workingDirectory, allowAbsoluteAccess)
+            const resolvedPath = resolve(workingDirectory, targetPath)
             const entries = await readdir(resolvedPath, { withFileTypes: true })
 
             const directoryEntries: DirectoryEntry[] = await Promise.all(
@@ -123,19 +93,17 @@ export function registerDirectoryHandlers(
         }
     })
 
-    rpcHandlerManager.registerHandler<GetDirectoryTreeRequest, GetDirectoryTreeResponse>('getDirectoryTree', async (data) => {
+    rpcHandlerManager.registerHandler<GetDirectoryTreeRequest, GetDirectoryTreeResponse>(RPC_METHODS.GetDirectoryTree, async (data) => {
         logger.debug('Get directory tree request:', data.path, 'maxDepth:', data.maxDepth)
 
         const targetPath = data.path || '.'
 
-        const validation = allowAbsoluteAccess
-            ? { valid: true }
-            : validatePath(targetPath, workingDirectory)
+        const validation = validatePath(targetPath, workingDirectory)
         if (!validation.valid) {
             return rpcError(validation.error ?? 'Invalid directory path')
         }
 
-        const resolvedRoot = resolveDirectoryPath(targetPath, workingDirectory, allowAbsoluteAccess)
+        const resolvedRoot = resolve(workingDirectory, targetPath)
 
         async function buildTree(path: string, name: string, currentDepth: number): Promise<TreeNode | null> {
             try {

@@ -12,15 +12,16 @@ import { startHookServer } from '@/claude/utils/startHookServer';
 import { generateHookSettingsFile, cleanupHookSettingsFile } from '@/modules/common/hooks/generateHookSettings';
 import { registerKillSessionHandler } from './registerKillSessionHandler';
 import type { Session } from './session';
-import { bootstrapSession } from '@/agent/sessionFactory';
+import { bootstrapExistingSession, bootstrapSession } from '@/agent/sessionFactory';
+import { registerLocalHandoffHandler } from '@/agent/localHandoff';
 import { createModeChangeHandler, createRunnerLifecycle, setControlledByUser } from '@/agent/runnerLifecycle';
 import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
+import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import { PermissionModeSchema } from '@hapi/protocol/schemas';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { normalizeClaudeSessionModel } from './model';
 import { normalizeClaudeSessionEffort } from './effort';
 import { getInvokedCwd } from '@/utils/invokedCwd';
-import { runtimeSlashCommandsFromClaudeSdk } from './slashCommands';
 
 export interface StartOptions {
     model?: string
@@ -31,10 +32,13 @@ export interface StartOptions {
     claudeEnvVars?: Record<string, string>
     claudeArgs?: string[]
     startedBy?: 'runner' | 'terminal'
+    existingSessionId?: string
+    workingDirectory?: string
+    resumeSessionId?: string
 }
 
 export async function runClaude(options: StartOptions = {}): Promise<void> {
-    const workingDirectory = getInvokedCwd();
+    const workingDirectory = options.workingDirectory ?? getInvokedCwd();
     const startedBy = options.startedBy ?? 'terminal';
 
     // Log environment info at startup
@@ -52,14 +56,22 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     const initialState: AgentState = {};
     const initialModel = normalizeClaudeSessionModel(options.model);
     const initialEffort = normalizeClaudeSessionEffort(options.effort);
-    const { api, session, sessionInfo } = await bootstrapSession({
-        flavor: 'claude',
-        startedBy,
-        workingDirectory,
-        agentState: initialState,
-        model: initialModel ?? undefined,
-        effort: initialEffort ?? undefined
-    });
+    const bootstrap = options.existingSessionId
+        ? await bootstrapExistingSession({
+            sessionId: options.existingSessionId,
+            flavor: 'claude',
+            startedBy,
+            workingDirectory
+        })
+        : await bootstrapSession({
+            flavor: 'claude',
+            startedBy,
+            workingDirectory,
+            agentState: initialState,
+            model: initialModel ?? undefined,
+            effort: initialEffort ?? undefined
+        });
+    const { api, session, sessionInfo } = bootstrap;
     logger.debug(`Session created: ${sessionInfo.id}`);
 
     // Extract SDK metadata in background and update session when ready
@@ -72,10 +84,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 tools: sdkMetadata.tools,
                 slashCommands: sdkMetadata.slashCommands
             }));
-            const runtimeSlashCommands = runtimeSlashCommandsFromClaudeSdk(sdkMetadata.slashCommands);
-            if (runtimeSlashCommands) {
-                session.emitSessionSlashCommands(runtimeSlashCommands);
-            }
             logger.debug('[start] Session metadata updated with SDK capabilities');
         } catch (error) {
             logger.debug('[start] Failed to update session metadata:', error);
@@ -138,6 +146,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
 
     lifecycle.registerProcessHandlers();
     registerKillSessionHandler(session.rpcHandlerManager, lifecycle.cleanupAndExit);
+    registerLocalHandoffHandler(session.rpcHandlerManager, lifecycle);
 
     // Set initial agent state
     const startingMode = options.startingMode ?? (startedBy === 'runner' ? 'remote' : 'local');
@@ -287,6 +296,41 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             return;
         }
 
+        if (specialCommand.type === 'plan') {
+            logger.debug('[start] Detected /plan command');
+            currentPermissionMode = specialCommand.mode ?? 'plan';
+            currentSessionRef.current?.setPermissionMode(currentPermissionMode);
+            currentSessionRef.current?.pushKeepAlive();
+            session.sendSessionEvent({
+                type: 'permission-mode-changed',
+                mode: currentPermissionMode
+            });
+
+            const enhancedMode: EnhancedMode = {
+                permissionMode: currentPermissionMode,
+                model: messageModel,
+                effort: messageEffort,
+                fallbackModel: messageFallbackModel,
+                customSystemPrompt: messageCustomSystemPrompt,
+                appendSystemPrompt: messageAppendSystemPrompt,
+                allowedTools: messageAllowedTools,
+                disallowedTools: messageDisallowedTools
+            };
+
+            if (!specialCommand.prompt) {
+                if (localId) {
+                    session.emitMessagesConsumed([localId]);
+                }
+                logger.debugLargeJson('[start] /plan command applied without prompt:', message);
+                return;
+            }
+
+            const planPrompt = formatMessageWithAttachments(specialCommand.prompt, message.content.attachments);
+            messageQueue.push(planPrompt, enhancedMode, localId);
+            logger.debugLargeJson('[start] /plan command prompt pushed to queue:', message);
+            return;
+        }
+
         // Push with resolved permission mode, model, system prompts, and tools
         const enhancedMode: EnhancedMode = {
             permissionMode: messagePermissionMode ?? 'default',
@@ -300,6 +344,12 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         };
         messageQueue.push(formattedText, enhancedMode, localId);
         logger.debugLargeJson('User message pushed to queue:', message)
+    });
+
+    session.onCancelQueuedMessage((localId) => {
+        const removed = messageQueue.cancelByLocalId(localId);
+        logger.debug(`[claude] cancelByLocalId(${localId}): ${removed ? 'removed' : 'not found (best-effort)'}`);
+        return removed;
     });
 
     const resolvePermissionMode = (value: unknown): PermissionMode => {
@@ -334,7 +384,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         return normalizeClaudeSessionEffort(value);
     };
 
-    session.rpcHandlerManager.registerHandler('set-session-config', async (payload: unknown) => {
+    session.rpcHandlerManager.registerHandler(RPC_METHODS.SetSessionConfig, async (payload: unknown) => {
         if (!payload || typeof payload !== 'object') {
             throw new Error('Invalid session config payload');
         }
@@ -383,6 +433,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             claudeEnvVars: options.claudeEnvVars,
             claudeArgs: options.claudeArgs,
             startedBy,
+            resumeSessionId: options.resumeSessionId,
             hookSettingsPath
         });
     } catch (error) {

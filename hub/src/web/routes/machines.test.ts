@@ -57,27 +57,12 @@ describe('machines routes', () => {
         })
     })
 
-    it('returns native Codex sessions for an online machine', async () => {
+    it('returns 400 when /opencode-models is called without cwd', async () => {
         const machine = createMachine()
         const engine = {
             getMachine: () => machine,
             getMachineByNamespace: () => machine,
-            listNativeCodexSessions: async () => ({
-                success: true,
-                sessions: [
-                    {
-                        codexSessionId: 'codex-thread-1',
-                        transcriptPath: '/home/me/.codex/sessions/thread.jsonl',
-                        cwd: '/repo',
-                        title: 'Fix reconnect',
-                        createdAt: 100,
-                        updatedAt: 123,
-                        messageCount: 2,
-                        userMessageCount: 1,
-                        agentMessageCount: 1
-                    }
-                ]
-            })
+            listOpencodeModelsForCwd: async () => ({ success: true, availableModels: [] })
         } as Partial<SyncEngine>
 
         const app = new Hono<WebAppEnv>()
@@ -87,39 +72,67 @@ describe('machines routes', () => {
         })
         app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
 
-        const response = await app.request('/api/machines/machine-1/native-codex-sessions')
+        const response = await app.request('/api/machines/machine-1/opencode-models')
 
-        expect(response.status).toBe(200)
+        expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            success: true,
-            sessions: [
-                {
-                    codexSessionId: 'codex-thread-1',
-                    transcriptPath: '/home/me/.codex/sessions/thread.jsonl',
-                    cwd: '/repo',
-                    title: 'Fix reconnect',
-                    createdAt: 100,
-                    updatedAt: 123,
-                    messageCount: 2,
-                    userMessageCount: 1,
-                    agentMessageCount: 1
+            success: false,
+            error: 'cwd query parameter is required'
+        })
+    })
+
+    it('forwards cwd to listOpencodeModelsForCwd and returns availableModels', async () => {
+        const machine = createMachine()
+        const calls: Array<{ machineId: string; cwd: string }> = []
+        const engine = {
+            getMachine: () => machine,
+            getMachineByNamespace: () => machine,
+            listOpencodeModelsForCwd: async (machineId: string, cwd: string) => {
+                calls.push({ machineId, cwd })
+                return {
+                    success: true,
+                    availableModels: [
+                        { modelId: 'ollama/exaone:4.5-33b-q8', name: 'Ollama/EXAONE 4.5 33B Q8' }
+                    ],
+                    currentModelId: 'ollama/exaone:4.5-33b-q8'
                 }
-            ]
+            }
+        } as Partial<SyncEngine>
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            await next()
+        })
+        app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
+
+        const response = await app.request(
+            '/api/machines/machine-1/opencode-models?cwd=' + encodeURIComponent('/home/user/proj')
+        )
+
+        expect(response.status).toBe(200)
+        expect(calls).toEqual([{ machineId: 'machine-1', cwd: '/home/user/proj' }])
+        expect(await response.json()).toEqual({
+            success: true,
+            availableModels: [
+                { modelId: 'ollama/exaone:4.5-33b-q8', name: 'Ollama/EXAONE 4.5 33B Q8' }
+            ],
+            currentModelId: 'ollama/exaone:4.5-33b-q8'
         })
     })
 
-    it('imports a native Codex session for an online machine', async () => {
+    it('returns Cursor models for an online machine', async () => {
         const machine = createMachine()
         const engine = {
             getMachine: () => machine,
             getMachineByNamespace: () => machine,
-            importNativeCodexSession: async (_machineId: string, params: { codexSessionId?: string }) => ({
+            listCursorModelsForMachine: async () => ({
                 success: true,
-                sessionId: 'hapi-session-1',
-                codexSessionId: params.codexSessionId ?? 'codex-thread-1',
-                transcriptPath: '/home/me/.codex/sessions/thread.jsonl',
-                importedMessages: 2,
-                skippedMessages: 1
+                availableModels: [
+                    { modelId: 'composer-2.5', name: 'Composer 2.5' },
+                    { modelId: 'gpt-5.5-high-fast', name: 'GPT-5.5 High Fast' }
+                ],
+                currentModelId: 'composer-2.5'
             })
         } as Partial<SyncEngine>
 
@@ -130,108 +143,16 @@ describe('machines routes', () => {
         })
         app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
 
-        const response = await app.request('/api/machines/machine-1/native-codex-sessions/import', {
-            method: 'POST',
-            body: JSON.stringify({ codexSessionId: 'codex-thread-1' })
-        })
+        const response = await app.request('/api/machines/machine-1/cursor-models')
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({
             success: true,
-            sessionId: 'hapi-session-1',
-            codexSessionId: 'codex-thread-1',
-            transcriptPath: '/home/me/.codex/sessions/thread.jsonl',
-            importedMessages: 2,
-            skippedMessages: 1
-        })
-    })
-
-    it('returns native Claude sessions for an online machine', async () => {
-        const machine = createMachine()
-        const engine = {
-            getMachine: () => machine,
-            getMachineByNamespace: () => machine,
-            listNativeClaudeSessions: async () => ({
-                success: true,
-                sessions: [
-                    {
-                        claudeSessionId: 'claude-session-1',
-                        transcriptPath: '/home/me/.claude/projects/repo/claude-session-1.jsonl',
-                        cwd: '/repo',
-                        title: 'Fix reconnect',
-                        createdAt: 100,
-                        updatedAt: 123,
-                        messageCount: 2,
-                        userMessageCount: 1,
-                        agentMessageCount: 1
-                    }
-                ]
-            })
-        } as Partial<SyncEngine>
-
-        const app = new Hono<WebAppEnv>()
-        app.use('*', async (c, next) => {
-            c.set('namespace', 'default')
-            await next()
-        })
-        app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
-
-        const response = await app.request('/api/machines/machine-1/native-claude-sessions')
-
-        expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({
-            success: true,
-            sessions: [
-                {
-                    claudeSessionId: 'claude-session-1',
-                    transcriptPath: '/home/me/.claude/projects/repo/claude-session-1.jsonl',
-                    cwd: '/repo',
-                    title: 'Fix reconnect',
-                    createdAt: 100,
-                    updatedAt: 123,
-                    messageCount: 2,
-                    userMessageCount: 1,
-                    agentMessageCount: 1
-                }
-            ]
-        })
-    })
-
-    it('imports a native Claude session for an online machine', async () => {
-        const machine = createMachine()
-        const engine = {
-            getMachine: () => machine,
-            getMachineByNamespace: () => machine,
-            importNativeClaudeSession: async (_machineId: string, params: { claudeSessionId?: string }) => ({
-                success: true,
-                sessionId: 'hapi-session-1',
-                claudeSessionId: params.claudeSessionId ?? 'claude-session-1',
-                transcriptPath: '/home/me/.claude/projects/repo/claude-session-1.jsonl',
-                importedMessages: 2,
-                skippedMessages: 1
-            })
-        } as Partial<SyncEngine>
-
-        const app = new Hono<WebAppEnv>()
-        app.use('*', async (c, next) => {
-            c.set('namespace', 'default')
-            await next()
-        })
-        app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
-
-        const response = await app.request('/api/machines/machine-1/native-claude-sessions/import', {
-            method: 'POST',
-            body: JSON.stringify({ claudeSessionId: 'claude-session-1' })
-        })
-
-        expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({
-            success: true,
-            sessionId: 'hapi-session-1',
-            claudeSessionId: 'claude-session-1',
-            transcriptPath: '/home/me/.claude/projects/repo/claude-session-1.jsonl',
-            importedMessages: 2,
-            skippedMessages: 1
+            availableModels: [
+                { modelId: 'composer-2.5', name: 'Composer 2.5' },
+                { modelId: 'gpt-5.5-high-fast', name: 'GPT-5.5 High Fast' }
+            ],
+            currentModelId: 'composer-2.5'
         })
     })
 })

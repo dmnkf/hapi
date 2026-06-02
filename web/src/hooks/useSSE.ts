@@ -1,22 +1,37 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { isObject, toSessionSummary } from '@hapi/protocol'
+import { MachinePatchSchema, MachineSchema, SessionPatchSchema, SessionSchema } from '@hapi/protocol/schemas'
 import type {
     Machine,
     MachinesResponse,
     Session,
+    SessionPatch,
     SessionResponse,
     SessionsResponse,
     SessionSummary,
     SyncEvent
 } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
-import { clearMessageWindow, getMessageWindowState, ingestIncomingMessages, markMessagesConsumed, updateMessageStatus } from '@/lib/message-window-store'
+import { clearMessageWindow, getMessageWindowState, ingestIncomingMessages, markMessagesConsumed, removeOptimisticMessage, updateMessageStatus } from '@/lib/message-window-store'
 
 type SSESubscription = {
     all?: boolean
     sessionId?: string
     machineId?: string
+}
+
+export type SSEScope = 'global' | 'full'
+
+const MESSAGE_STREAM_EVENT_TYPES = new Set<SyncEvent['type']>([
+    'message-received',
+    'messages-consumed',
+    'message-cancelled',
+    'scheduled-matured'
+])
+
+export function isGlobalScopedMessageStreamEvent(scope: SSEScope, eventType: SyncEvent['type']): boolean {
+    return scope === 'global' && MESSAGE_STREAM_EVENT_TYPES.has(eventType)
 }
 
 type VisibilityState = 'visible' | 'hidden'
@@ -30,8 +45,6 @@ const RECONNECT_MAX_DELAY_MS = 30_000
 const RECONNECT_JITTER_MS = 500
 const INVALIDATION_BATCH_MS = 16
 
-type SessionPatch = Partial<Pick<Session, 'active' | 'thinking' | 'activeAt' | 'updatedAt' | 'model' | 'modelReasoningEffort' | 'effort' | 'permissionMode' | 'collaborationMode' | 'capabilities' | 'runtimeSlashCommands'>>
-
 function sortSessionSummaries(left: SessionSummary, right: SessionSummary): number {
     if (left.active !== right.active) {
         return left.active ? -1 : 1
@@ -42,108 +55,28 @@ function sortSessionSummaries(left: SessionSummary, right: SessionSummary): numb
     return right.updatedAt - left.updatedAt
 }
 
-function hasRecordShape(value: unknown): value is Record<string, unknown> {
-    return isObject(value)
-}
-
 function isSessionRecord(value: unknown): value is Session {
-    if (!hasRecordShape(value)) {
-        return false
-    }
-    return typeof value.id === 'string'
-        && typeof value.active === 'boolean'
-        && typeof value.activeAt === 'number'
-        && typeof value.updatedAt === 'number'
-        && typeof value.thinking === 'boolean'
+    return SessionSchema.safeParse(value).success
 }
 
 function getSessionPatch(value: unknown): SessionPatch | null {
-    if (!hasRecordShape(value)) {
+    const parsed = SessionPatchSchema.safeParse(value)
+    if (!parsed.success) {
         return null
     }
-
-    const patch: SessionPatch = {}
-    let hasKnownPatch = false
-
-    if (typeof value.active === 'boolean') {
-        patch.active = value.active
-        hasKnownPatch = true
-    }
-    if (typeof value.thinking === 'boolean') {
-        patch.thinking = value.thinking
-        hasKnownPatch = true
-    }
-    if (typeof value.activeAt === 'number') {
-        patch.activeAt = value.activeAt
-        hasKnownPatch = true
-    }
-    if (typeof value.updatedAt === 'number') {
-        patch.updatedAt = value.updatedAt
-        hasKnownPatch = true
-    }
-    if (value.model === null || typeof value.model === 'string') {
-        patch.model = value.model
-        hasKnownPatch = true
-    }
-    if (value.modelReasoningEffort === null || typeof value.modelReasoningEffort === 'string') {
-        patch.modelReasoningEffort = value.modelReasoningEffort
-        hasKnownPatch = true
-    }
-    if (value.effort === null || typeof value.effort === 'string') {
-        patch.effort = value.effort
-        hasKnownPatch = true
-    }
-    if (typeof value.permissionMode === 'string') {
-        patch.permissionMode = value.permissionMode as Session['permissionMode']
-        hasKnownPatch = true
-    }
-    if (typeof value.collaborationMode === 'string') {
-        patch.collaborationMode = value.collaborationMode as Session['collaborationMode']
-        hasKnownPatch = true
-    }
-    if (hasRecordShape(value.capabilities)) {
-        patch.capabilities = value.capabilities as Session['capabilities']
-        hasKnownPatch = true
-    }
-    if (hasRecordShape(value.runtimeSlashCommands)) {
-        patch.runtimeSlashCommands = value.runtimeSlashCommands as Session['runtimeSlashCommands']
-        hasKnownPatch = true
-    }
-
-    return hasKnownPatch ? patch : null
-}
-
-function hasUnknownSessionPatchKeys(value: unknown): boolean {
-    if (!hasRecordShape(value)) {
-        return false
-    }
-    const knownKeys = new Set(['active', 'thinking', 'activeAt', 'updatedAt', 'model', 'modelReasoningEffort', 'effort', 'permissionMode', 'collaborationMode', 'capabilities', 'runtimeSlashCommands'])
-    return Object.keys(value).some((key) => !knownKeys.has(key))
-}
-
-function isMachineMetadata(value: unknown): value is Machine['metadata'] {
-    if (value === null) {
-        return true
-    }
-    if (!hasRecordShape(value)) {
-        return false
-    }
-    return typeof value.host === 'string'
-        && typeof value.platform === 'string'
-        && typeof value.happyCliVersion === 'string'
+    return Object.keys(parsed.data).length > 0 ? parsed.data : null
 }
 
 function isMachineRecord(value: unknown): value is Machine {
-    if (!hasRecordShape(value)) {
-        return false
-    }
-    return typeof value.id === 'string'
-        && typeof value.active === 'boolean'
-        && isMachineMetadata(value.metadata)
+    return MachineSchema.safeParse(value).success
 }
 
-function isInactiveMachinePatch(value: unknown): boolean {
-    return hasRecordShape(value) && value.active === false
+function getMachinePatch(value: unknown): { active?: boolean; activeAt?: number; updatedAt?: number } | null {
+    const parsed = MachinePatchSchema.safeParse(value)
+    if (!parsed.success) {
+        return null
+    }
+    return Object.keys(parsed.data).length > 0 ? parsed.data : null
 }
 
 function getVisibilityState(): VisibilityState {
@@ -185,12 +118,13 @@ export function useSSE(options: {
     token: string
     baseUrl: string
     subscription?: SSESubscription
+    scope?: SSEScope
     onEvent: (event: SyncEvent) => void
     onConnect?: () => void
     onDisconnect?: (reason: string) => void
     onError?: (error: unknown) => void
     onToast?: (event: ToastEvent) => void
-}): { subscriptionId: string | null; reconnect: (reason?: string) => void } {
+}): { subscriptionId: string | null } {
     const queryClient = useQueryClient()
     const onEventRef = useRef(options.onEvent)
     const onConnectRef = useRef(options.onConnect)
@@ -207,12 +141,8 @@ export function useSSE(options: {
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const reconnectAttemptRef = useRef(0)
     const lastActivityAtRef = useRef(0)
-    const requestReconnectRef = useRef<((reason: string) => void) | null>(null)
     const [reconnectNonce, setReconnectNonce] = useState(0)
     const [subscriptionId, setSubscriptionId] = useState<string | null>(null)
-    const reconnect = useCallback((reason: string = 'manual') => {
-        requestReconnectRef.current?.(reason)
-    }, [])
 
     useEffect(() => {
         onEventRef.current = options.onEvent
@@ -235,10 +165,11 @@ export function useSSE(options: {
     }, [options.onToast])
 
     const subscription = options.subscription ?? {}
+    const scope = options.scope ?? 'full'
 
     const subscriptionKey = useMemo(() => {
-        return `${subscription.all ? '1' : '0'}|${subscription.sessionId ?? ''}|${subscription.machineId ?? ''}`
-    }, [subscription.all, subscription.sessionId, subscription.machineId])
+        return `${scope}|${subscription.all ? '1' : '0'}|${subscription.sessionId ?? ''}|${subscription.machineId ?? ''}`
+    }, [scope, subscription.all, subscription.sessionId, subscription.machineId])
 
     useEffect(() => {
         if (!options.enabled) {
@@ -256,7 +187,6 @@ export function useSSE(options: {
                 reconnectTimerRef.current = null
             }
             reconnectAttemptRef.current = 0
-            requestReconnectRef.current = null
             setSubscriptionId(null)
             return
         }
@@ -307,7 +237,6 @@ export function useSSE(options: {
             setSubscriptionId(null)
             scheduleReconnect()
         }
-        requestReconnectRef.current = requestReconnect
 
         const flushInvalidations = () => {
             const pending = pendingInvalidationsRef.current
@@ -371,9 +300,13 @@ export function useSSE(options: {
                     return previous
                 }
 
-                const summary = toSessionSummary(session)
+                const existingIndex = previous.sessions.findIndex((item) => item.id === session.id)
+                const existing = existingIndex >= 0 ? previous.sessions[existingIndex] : undefined
+                const summary = {
+                    ...toSessionSummary(session),
+                    futureScheduledMessageCount: existing?.futureScheduledMessageCount ?? 0
+                }
                 const nextSessions = previous.sessions.slice()
-                const existingIndex = nextSessions.findIndex((item) => item.id === session.id)
                 if (existingIndex >= 0) {
                     nextSessions[existingIndex] = summary
                 } else {
@@ -408,6 +341,9 @@ export function useSSE(options: {
                     thinking: patch.thinking ?? current.thinking,
                     activeAt: patch.activeAt ?? current.activeAt,
                     updatedAt: patch.updatedAt ?? current.updatedAt,
+                    backgroundTaskCount: Object.prototype.hasOwnProperty.call(patch, 'backgroundTaskCount')
+                        ? patch.backgroundTaskCount ?? 0
+                        : current.backgroundTaskCount,
                     model: Object.prototype.hasOwnProperty.call(patch, 'model') ? patch.model ?? null : current.model,
                     effort: Object.prototype.hasOwnProperty.call(patch, 'effort') ? patch.effort ?? null : current.effort
                 }
@@ -511,8 +447,39 @@ export function useSSE(options: {
                 return
             }
 
+            if (scope === 'global' && MESSAGE_STREAM_EVENT_TYPES.has(event.type)) {
+                if (event.type === 'message-received' && event.message.scheduledAt != null) {
+                    queueSessionListInvalidation()
+                }
+                if (
+                    event.type === 'message-cancelled'
+                    || event.type === 'messages-consumed'
+                    || event.type === 'scheduled-matured'
+                ) {
+                    queueSessionListInvalidation()
+                }
+                // The global `all` subscription also receives message-stream events.
+                // Session-scoped SSE normally drives the message window, but during
+                // reconnect gaps or while another session is selected, only the global
+                // connection may be alive — still clear the queued bar / optimistic rows.
+                if (event.type === 'messages-consumed') {
+                    markMessagesConsumed(event.sessionId, event.localIds, event.invokedAt)
+                }
+                if (event.type === 'message-cancelled') {
+                    removeOptimisticMessage(event.sessionId, event.messageId)
+                }
+                onEventRef.current(event)
+                return
+            }
+
             if (event.type === 'messages-consumed') {
-                markMessagesConsumed(event.sessionId, event.localIds)
+                markMessagesConsumed(event.sessionId, event.localIds, event.invokedAt)
+            }
+
+            if (event.type === 'message-cancelled') {
+                // Remove the cancelled message from the store. If the local
+                // optimistic removal already cleared it, this is a no-op.
+                removeOptimisticMessage(event.sessionId, event.messageId)
             }
 
             if (event.type === 'message-received') {
@@ -539,10 +506,6 @@ export function useSSE(options: {
                         if (!summaryPatched) {
                             queueSessionListInvalidation()
                         }
-                        if (hasUnknownSessionPatchKeys(event.data)) {
-                            queueSessionDetailInvalidation(event.sessionId)
-                            queueSessionListInvalidation()
-                        }
                     } else {
                         queueSessionDetailInvalidation(event.sessionId)
                         queueSessionListInvalidation()
@@ -553,9 +516,17 @@ export function useSSE(options: {
             if (event.type === 'machine-updated') {
                 if (isMachineRecord(event.data)) {
                     upsertMachine(event.data)
-                } else if (event.data === null || isInactiveMachinePatch(event.data)) {
+                } else if (event.data === null) {
                     removeMachine(event.machineId)
-                } else if (!hasRecordShape(event.data) || typeof event.data.activeAt !== 'number') {
+                } else {
+                    const patch = getMachinePatch(event.data)
+                    if (patch?.active === false) {
+                        removeMachine(event.machineId)
+                    } else {
+                        queueMachinesInvalidation()
+                    }
+                }
+                if (event.data === undefined) {
                     queueMachinesInvalidation()
                 }
             }
@@ -645,16 +616,13 @@ export function useSSE(options: {
                 clearTimeout(reconnectTimerRef.current)
                 reconnectTimerRef.current = null
             }
-            if (requestReconnectRef.current === requestReconnect) {
-                requestReconnectRef.current = null
-            }
             eventSource.close()
             if (eventSourceRef.current === eventSource) {
                 eventSourceRef.current = null
             }
             setSubscriptionId(null)
         }
-    }, [options.baseUrl, options.enabled, options.token, subscriptionKey, queryClient, reconnectNonce])
+    }, [options.baseUrl, options.enabled, options.scope, options.token, scope, subscriptionKey, queryClient, reconnectNonce])
 
-    return { subscriptionId, reconnect }
+    return { subscriptionId }
 }

@@ -47,7 +47,6 @@ function createFakeChild() {
 afterEach(() => {
     vi.clearAllMocks()
     delete process.env.HAPI_CLAUDE_PATH
-    delete process.env.CLAUDE_CODE_ENTRYPOINT
 })
 
 describe('Query', () => {
@@ -97,32 +96,5 @@ describe('Query', () => {
         const result = query({ prompt, options: { promptFailureCleanupTimeoutMs: 10 } })
 
         await expect(result.next()).rejects.toThrow('prompt failed')
-    })
-
-    it('sets sdk entrypoint on the Claude child without mutating parent env', async () => {
-        const child = createFakeChild()
-        spawnMock.mockReturnValueOnce(child)
-        process.env.HAPI_CLAUDE_PATH = 'claude'
-
-        const { query } = await import('./query')
-        query({ prompt: 'hello' })
-
-        expect(spawnMock).toHaveBeenCalledTimes(1)
-        expect(spawnMock.mock.calls[0][2].env.CLAUDE_CODE_ENTRYPOINT).toBe('sdk-ts')
-        expect(process.env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
-    })
-
-    it('can omit sdk entrypoint so remote HAPI sessions remain native-resumable', async () => {
-        const child = createFakeChild()
-        spawnMock.mockReturnValueOnce(child)
-        process.env.HAPI_CLAUDE_PATH = 'claude'
-        process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts'
-
-        const { query } = await import('./query')
-        query({ prompt: 'hello', options: { claudeCodeEntrypoint: null } })
-
-        expect(spawnMock).toHaveBeenCalledTimes(1)
-        expect(spawnMock.mock.calls[0][2].env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
-        expect(process.env.CLAUDE_CODE_ENTRYPOINT).toBe('sdk-ts')
     })
 })

@@ -291,6 +291,34 @@ describe('session model', () => {
         })
     })
 
+    it('rejects active session config updates when CLI ignores requested keys', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            { of: () => ({ to: () => ({ emit() {} }) }) } as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'session-config-ignored',
+                { path: '/tmp/project', host: 'localhost', flavor: 'opencode' },
+                null,
+                'default'
+            )
+            engine.handleSessionAlive({ sid: session.id, time: Date.now() })
+            ;(engine as any).rpcGateway.requestSessionConfig = async () => ({ applied: {} })
+
+            await expect(
+                engine.applySessionConfig(session.id, { modelReasoningEffort: 'high' })
+            ).rejects.toThrow('Session did not apply modelReasoningEffort')
+            expect(engine.getSession(session.id)?.modelReasoningEffort).toBeNull()
+        } finally {
+            engine.stop()
+        }
+    })
+
     it('touches session updatedAt when web sends a message through sync engine', async () => {
         const store = new Store(':memory:')
         const engine = new SyncEngine(
@@ -605,6 +633,199 @@ describe('session model', () => {
         }
     })
 
+    it('recovers claude resume session ID from stored messages when metadata is missing it', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'session-claude-resume-from-message',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'claude'
+                },
+                null,
+                'default',
+                'sonnet'
+            )
+            store.messages.addMessage(session.id, {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        sessionId: '7f5cd4ee-3a76-4601-a7b4-f9eb976bf515'
+                    }
+                }
+            })
+            engine.getOrCreateMachine(
+                'machine-1',
+                { host: 'localhost', platform: 'linux', happyCliVersion: '0.1.0' },
+                null,
+                'default'
+            )
+            engine.handleMachineAlive({ machineId: 'machine-1', time: Date.now() })
+
+            let capturedResumeSessionId: string | undefined
+            ;(engine as any).rpcGateway.spawnSession = async (
+                _machineId: string,
+                _directory: string,
+                _agent: string,
+                _model?: string,
+                _modelReasoningEffort?: string,
+                _yolo?: boolean,
+                _sessionType?: 'simple' | 'worktree',
+                _worktreeName?: string,
+                resumeSessionId?: string
+            ) => {
+                capturedResumeSessionId = resumeSessionId
+                return { type: 'success', sessionId: session.id }
+            }
+            ;(engine as any).waitForSessionActive = async () => true
+
+            const result = await engine.resumeSession(session.id, 'default')
+
+            expect(result).toEqual({ type: 'success', sessionId: session.id })
+            expect(capturedResumeSessionId).toBe('7f5cd4ee-3a76-4601-a7b4-f9eb976bf515')
+            expect(store.sessions.getSession(session.id)?.metadata).toMatchObject({
+                claudeSessionId: '7f5cd4ee-3a76-4601-a7b4-f9eb976bf515'
+            })
+        } finally {
+            engine.stop()
+        }
+    })
+
+
+    it('recovers the newest claude session ID when stored messages contain multiple IDs', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'session-claude-resume-newest-message',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'claude'
+                },
+                null,
+                'default',
+                'sonnet'
+            )
+            store.messages.addMessage(session.id, {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        sessionId: '11111111-1111-4111-8111-111111111111'
+                    }
+                }
+            })
+            store.messages.addMessage(session.id, {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        sessionId: '22222222-2222-4222-8222-222222222222'
+                    }
+                }
+            })
+            engine.getOrCreateMachine(
+                'machine-1',
+                { host: 'localhost', platform: 'linux', happyCliVersion: '0.1.0' },
+                null,
+                'default'
+            )
+            engine.handleMachineAlive({ machineId: 'machine-1', time: Date.now() })
+
+            let capturedResumeSessionId: string | undefined
+            ;(engine as any).rpcGateway.spawnSession = async (
+                _machineId: string,
+                _directory: string,
+                _agent: string,
+                _model?: string,
+                _modelReasoningEffort?: string,
+                _yolo?: boolean,
+                _sessionType?: 'simple' | 'worktree',
+                _worktreeName?: string,
+                resumeSessionId?: string
+            ) => {
+                capturedResumeSessionId = resumeSessionId
+                return { type: 'success', sessionId: session.id }
+            }
+            ;(engine as any).waitForSessionActive = async () => true
+
+            const result = await engine.resumeSession(session.id, 'default')
+
+            expect(result).toEqual({ type: 'success', sessionId: session.id })
+            expect(capturedResumeSessionId).toBe('22222222-2222-4222-8222-222222222222')
+            expect(store.sessions.getSession(session.id)?.metadata).toMatchObject({
+                claudeSessionId: '22222222-2222-4222-8222-222222222222'
+            })
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('does not recover a non-UUID sessionId from stored messages', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'session-claude-resume-no-token',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'claude'
+                },
+                null,
+                'default',
+                'sonnet'
+            )
+            store.messages.addMessage(session.id, {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        sessionId: 'hapi-session-id-not-claude-uuid'
+                    }
+                }
+            })
+
+            const result = await engine.resumeSession(session.id, 'default')
+
+            expect(result).toEqual({
+                type: 'error',
+                message: 'Resume session ID unavailable. Start a new session in this directory, or retry after the agent has initialized.',
+                code: 'resume_unavailable'
+            })
+        } finally {
+            engine.stop()
+        }
+    })
+
     it('passes the cached permissionMode when respawning a resumed session', async () => {
         const store = new Store(':memory:')
         const engine = new SyncEngine(
@@ -666,6 +887,474 @@ describe('session model', () => {
 
             expect(result).toEqual({ type: 'success', sessionId: session.id })
             expect(capturedPermissionMode).toBe('bypassPermissions')
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('resume succeeds when session-alive races ahead of set-session-config and merges spawned session', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const oldSession = engine.getOrCreateSession(
+                'session-resume-config-race',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    codexSessionId: 'codex-thread-race'
+                },
+                null,
+                'default',
+                'gpt-5.4'
+            )
+            engine.getOrCreateMachine(
+                'machine-1',
+                { host: 'localhost', platform: 'linux', happyCliVersion: '0.1.0' },
+                null,
+                'default'
+            )
+            engine.handleMachineAlive({ machineId: 'machine-1', time: Date.now() })
+            engine.handleSessionAlive({
+                sid: oldSession.id,
+                permissionMode: 'yolo',
+                time: Date.now()
+            })
+            engine.handleSessionEnd({ sid: oldSession.id, time: Date.now() })
+
+            const spawnedSession = engine.getOrCreateSession(
+                'session-resume-config-race-spawned',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    codexSessionId: 'codex-thread-race'
+                },
+                null,
+                'default',
+                'gpt-5.4'
+            )
+            const spawnedSessionId = spawnedSession.id
+            let configRpcCalls = 0
+            let mergeCalls = 0
+            const sessionCache = (engine as any).sessionCache
+            const mergeSessions = sessionCache.mergeSessions.bind(sessionCache)
+            sessionCache.mergeSessions = async (oldSessionId: string, newSessionId: string, namespace: string) => {
+                mergeCalls += 1
+                return mergeSessions(oldSessionId, newSessionId, namespace)
+            }
+            ;(engine as any).rpcGateway.spawnSession = async (
+                _machineId: string,
+                _directory: string,
+                _agent: string,
+                _model?: string,
+                _modelReasoningEffort?: string,
+                _yolo?: boolean,
+                _sessionType?: string,
+                _worktreeName?: string,
+                _resumeSessionId?: string,
+                _effort?: string,
+                permissionMode?: string
+            ) => {
+                engine.handleSessionAlive({
+                    sid: spawnedSessionId,
+                    time: Date.now(),
+                    permissionMode: permissionMode as never
+                })
+                return { type: 'success', sessionId: spawnedSessionId }
+            }
+            ;(engine as any).rpcGateway.requestSessionConfig = async () => {
+                configRpcCalls += 1
+                throw new Error('RPC handler not registered')
+            }
+            ;(engine as any).waitForSessionActive = async () => true
+
+            const result = await engine.resumeSession(oldSession.id, 'default')
+
+            expect(result).toEqual({ type: 'success', sessionId: spawnedSessionId })
+            expect(configRpcCalls).toBe(0)
+            expect(mergeCalls).toBe(1)
+            expect(engine.getSession(spawnedSessionId)?.permissionMode).toBe('yolo')
+            expect(store.sessions.getSession(oldSession.id)).toBeNull()
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('resolves a local resume target for a Codex session', () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'local-resume-codex',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    codexSessionId: 'codex-thread-1'
+                },
+                { controlledByUser: false },
+                'default',
+                'gpt-5.4',
+                undefined,
+                'xhigh'
+            )
+
+            const result = engine.resolveLocalResumeTarget(session.id, 'default')
+
+            expect(result).toEqual({
+                type: 'success',
+                target: {
+                    sessionId: session.id,
+                    flavor: 'codex',
+                    directory: '/tmp/project',
+                    machineId: 'machine-1',
+                    host: 'localhost',
+                    active: session.active,
+                    thinking: session.thinking,
+                    controlledByUser: false,
+                    agentSessionId: 'codex-thread-1',
+                    model: 'gpt-5.4',
+                    effort: null,
+                    modelReasoningEffort: 'xhigh',
+                    permissionMode: undefined,
+                    collaborationMode: undefined
+                }
+            })
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('recovers a Claude local resume target from stored messages', () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'local-resume-claude-from-message',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'claude'
+                },
+                null,
+                'default'
+            )
+            store.messages.addMessage(session.id, {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        sessionId: '22222222-2222-4222-8222-222222222222'
+                    }
+                }
+            })
+
+            const result = engine.resolveLocalResumeTarget(session.id, 'default')
+
+            expect(result.type).toBe('success')
+            if (result.type === 'success') {
+                expect(result.target.flavor).toBe('claude')
+                expect(result.target.agentSessionId).toBe('22222222-2222-4222-8222-222222222222')
+            }
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('returns resume_unavailable when the local resume target lacks an agent session id', () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'local-resume-no-agent-id',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'codex'
+                },
+                null,
+                'default'
+            )
+
+            expect(engine.resolveLocalResumeTarget(session.id, 'default')).toEqual({
+                type: 'error',
+                message: 'Resume session ID unavailable. Start a new session in this directory, or retry after the agent has initialized.',
+                code: 'resume_unavailable'
+            })
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('returns resume_unavailable when a cursor session lacks cursorSessionId', () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'local-resume-cursor-no-id',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'cursor'
+                },
+                null,
+                'default'
+            )
+
+            expect(engine.resolveLocalResumeTarget(session.id, 'default')).toEqual({
+                type: 'error',
+                message: 'Resume session ID unavailable. Start a new session in this directory, or retry after the agent has initialized.',
+                code: 'resume_unavailable'
+            })
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('resumeSession fresh-spawns when inactive cursor session has no agent id and no user messages', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'never-started-cursor',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'cursor'
+                },
+                null,
+                'default'
+            )
+            engine.getOrCreateMachine(
+                'machine-1',
+                { host: 'localhost', platform: 'linux', happyCliVersion: '0.1.0' },
+                null,
+                'default'
+            )
+            engine.handleMachineAlive({ machineId: 'machine-1', time: Date.now() })
+
+            let capturedResumeSessionId: string | undefined = 'unset'
+            ;(engine as any).rpcGateway.spawnSession = async (
+                _machineId: string,
+                _directory: string,
+                _agent: string,
+                _model?: string,
+                _modelReasoningEffort?: string,
+                _yolo?: boolean,
+                _sessionType?: string,
+                _worktreeName?: string,
+                resumeSessionId?: string
+            ) => {
+                capturedResumeSessionId = resumeSessionId
+                return { type: 'success', sessionId: session.id }
+            }
+            ;(engine as any).waitForSessionActive = async () => true
+
+            const result = await engine.resumeSession(session.id, 'default')
+
+            expect(result).toEqual({ type: 'success', sessionId: session.id })
+            expect(capturedResumeSessionId).toBeUndefined()
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('includes first user message in local resumable sessions', () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'local-resume-first-message',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    codexSessionId: 'codex-thread-1',
+                    name: 'Generated title'
+                },
+                null,
+                'default'
+            )
+            store.messages.addMessage(session.id, {
+                role: 'agent',
+                content: { type: 'text', text: 'agent warmup' }
+            })
+            store.messages.addMessage(session.id, {
+                role: 'user',
+                content: { type: 'text', text: '  Build the picker\nwith search  ' }
+            })
+
+            const sessions = engine.listLocalResumableSessions('default', { machineId: 'machine-1' })
+
+            expect(sessions.find((item) => item.sessionId === session.id)).toMatchObject({
+                name: 'Generated title',
+                firstUserMessage: 'Build the picker with search'
+            })
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('recovers first user message from stored Claude user output events', () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'local-resume-first-claude-output',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'claude',
+                    claudeSessionId: '11111111-1111-4111-8111-111111111111',
+                    name: 'Generated title'
+                },
+                null,
+                'default'
+            )
+            store.messages.addMessage(session.id, {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'user',
+                        message: {
+                            role: 'user',
+                            content: [{ type: 'text', text: 'First Claude prompt' }]
+                        }
+                    }
+                }
+            })
+
+            const sessions = engine.listLocalResumableSessions('default', { machineId: 'machine-1' })
+
+            expect(sessions.find((item) => item.sessionId === session.id)).toMatchObject({
+                name: 'Generated title',
+                firstUserMessage: 'First Claude prompt'
+            })
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('local handoff succeeds immediately for inactive sessions', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'local-handoff-inactive',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    codexSessionId: 'codex-thread-1'
+                },
+                { controlledByUser: false },
+                'default'
+            )
+            engine.handleSessionEnd({ sid: session.id, time: Date.now() })
+
+            await expect(engine.handoffSessionToLocal(session.id, 'default')).resolves.toEqual({
+                type: 'success'
+            })
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('local handoff rejects sessions already controlled by a local terminal', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'local-handoff-already-local',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    codexSessionId: 'codex-thread-1'
+                },
+                { controlledByUser: true },
+                'default'
+            )
+            engine.handleSessionAlive({ sid: session.id, time: Date.now(), mode: 'local' })
+
+            await expect(engine.handoffSessionToLocal(session.id, 'default')).resolves.toEqual({
+                type: 'error',
+                message: 'Session is already controlled by a local terminal',
+                code: 'already_local'
+            })
         } finally {
             engine.stop()
         }

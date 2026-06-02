@@ -1,12 +1,16 @@
-import {
-    CODEX_REASONING_EFFORTS,
-    CODEX_REASONING_EFFORT_LABELS,
-    type SessionCapabilities,
-} from '@hapi/protocol'
-
 export type CodexComposerReasoningEffortOption = {
     value: string | null
     label: string
+}
+
+const CODEX_REASONING_EFFORT_PRESETS = ['low', 'medium', 'high', 'xhigh'] as const
+const OPENCODE_REASONING_EFFORT_PRESETS = ['low', 'medium', 'high', 'max'] as const
+const CODEX_REASONING_EFFORT_LABELS: Record<string, string> = {
+    low: 'Low',
+    medium: 'Medium',
+    high: 'High',
+    xhigh: 'XHigh',
+    max: 'Max'
 }
 
 function normalizeCodexComposerReasoningEffort(effort?: string | null): string | null {
@@ -25,21 +29,17 @@ function formatCodexReasoningEffortLabel(effort: string): string {
 
 export function getCodexComposerReasoningEffortOptions(
     currentEffort?: string | null,
-    capabilities?: SessionCapabilities
+    flavor?: string | null
 ): CodexComposerReasoningEffortOption[] {
     const normalizedCurrentEffort = normalizeCodexComposerReasoningEffort(currentEffort)
-    // Prefer runtime-reported efforts when present; fall back to the shared enum.
-    const presets = capabilities?.reasoningEfforts && capabilities.reasoningEfforts.length > 0
-        ? capabilities.reasoningEfforts
-        : (CODEX_REASONING_EFFORTS as readonly string[])
-
+    const presets = flavor === 'opencode' ? OPENCODE_REASONING_EFFORT_PRESETS : CODEX_REASONING_EFFORT_PRESETS
     const options: CodexComposerReasoningEffortOption[] = [
         { value: null, label: 'Default' }
     ]
 
     if (
         normalizedCurrentEffort
-        && !presets.includes(normalizedCurrentEffort)
+        && !(presets as readonly string[]).includes(normalizedCurrentEffort)
     ) {
         options.push({
             value: normalizedCurrentEffort,
@@ -49,7 +49,7 @@ export function getCodexComposerReasoningEffortOptions(
 
     options.push(...presets.map((effort) => ({
         value: effort,
-        label: formatCodexReasoningEffortLabel(effort)
+        label: CODEX_REASONING_EFFORT_LABELS[effort]
     })))
 
     return options

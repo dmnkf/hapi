@@ -1,10 +1,12 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ApiClient } from '@/api/client'
-import type { DirectoryEntry, Machine, NativeClaudeSessionSummary, NativeCodexSessionSummary } from '@/types/api'
+import type { Machine } from '@/types/api'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useMachinePathsExists } from '@/hooks/useMachinePathsExists'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { useCodexModels } from '@/hooks/queries/useCodexModels'
+import { useCursorModelsForMachine } from '@/hooks/queries/useCursorModelsForMachine'
+import { useOpencodeModelsForCwd } from '@/hooks/queries/useOpencodeModelsForCwd'
 import { useSessions } from '@/hooks/queries/useSessions'
 import { useActiveSuggestions, type Suggestion } from '@/hooks/useActiveSuggestions'
 import { useDirectorySuggestions } from '@/hooks/useDirectorySuggestions'
@@ -16,7 +18,9 @@ import { AgentSelector } from './AgentSelector'
 import { DirectorySection } from './DirectorySection'
 import { MachineSelector } from './MachineSelector'
 import { ModelSelector } from './ModelSelector'
+import { OpencodeModelSelector } from './OpencodeModelSelector'
 import { ClaudeEffortSelector } from './ClaudeEffortSelector'
+import { shouldEnableOpencodeModelDiscovery } from './opencodeModelsGate'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
 import {
     loadPreferredAgent,
@@ -26,126 +30,7 @@ import {
 } from './preferences'
 import { SessionTypeSelector } from './SessionTypeSelector'
 import { YoloToggle } from './YoloToggle'
-import { QuickStartCards } from './QuickStartCards'
-import { useQuickStartConfigs, type QuickStartConfig } from './useQuickStartConfigs'
 import { formatRunnerSpawnError } from '../../utils/formatRunnerSpawnError'
-
-const ADVANCED_STORAGE_KEY = 'hapi:newSession:showAdvanced'
-
-type NativeAttachSession =
-    | ({ agent: 'claude' } & NativeClaudeSessionSummary)
-    | ({ agent: 'codex' } & NativeCodexSessionSummary)
-
-function loadShowAdvanced(): boolean {
-    try {
-        return localStorage.getItem(ADVANCED_STORAGE_KEY) === 'true'
-    } catch {
-        return false
-    }
-}
-
-function getMachineTitle(machine: Machine): string {
-    if (machine.metadata?.displayName) return machine.metadata.displayName
-    if (machine.metadata?.host) return machine.metadata.host
-    return machine.id.slice(0, 8)
-}
-
-function getDefaultBrowsePath(machine: Machine | null): string {
-    return machine?.metadata?.platform === 'win32' ? 'C:\\' : '/'
-}
-
-function normalizeTimestampMs(value: number): number {
-    return value < 1_000_000_000_000 ? value * 1000 : value
-}
-
-function formatNativeSessionTimestamp(value: number): string {
-    const ms = normalizeTimestampMs(value)
-    if (!Number.isFinite(ms)) {
-        return 'unknown'
-    }
-
-    return new Date(ms).toLocaleString([], {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    })
-}
-
-function formatNativeSessionDetails(session: NativeAttachSession): string {
-    const parts = [
-        `Updated ${formatNativeSessionTimestamp(session.updatedAt)}`,
-        `Created ${formatNativeSessionTimestamp(session.createdAt)}`,
-        `${session.messageCount} msg${session.messageCount === 1 ? '' : 's'}`
-    ]
-    if (session.model) {
-        parts.push(session.model)
-    }
-    return parts.join(' · ')
-}
-
-function getPathSeparator(machine: Machine | null, path: string): '/' | '\\' {
-    if (path.includes('\\')) return '\\'
-    if (machine?.metadata?.platform === 'win32') return '\\'
-    return '/'
-}
-
-function getDirectoryLookupTarget(
-    query: string,
-    machine: Machine | null
-): { directoryPath: string; fragment: string; separator: '/' | '\\' } | null {
-    const trimmed = query.trim()
-
-    if (!trimmed) {
-        const directoryPath = getDefaultBrowsePath(machine)
-        return {
-            directoryPath,
-            fragment: '',
-            separator: getPathSeparator(machine, directoryPath)
-        }
-    }
-
-    if (/^[A-Za-z]:$/.test(trimmed)) {
-        const directoryPath = `${trimmed}\\`
-        return {
-            directoryPath,
-            fragment: '',
-            separator: '\\'
-        }
-    }
-
-    if (trimmed.endsWith('/') || trimmed.endsWith('\\')) {
-        return {
-            directoryPath: trimmed,
-            fragment: '',
-            separator: getPathSeparator(machine, trimmed)
-        }
-    }
-
-    const lastSeparator = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-    if (lastSeparator < 0) {
-        return null
-    }
-
-    const directoryPath = trimmed.slice(0, lastSeparator + 1)
-    return {
-        directoryPath,
-        fragment: trimmed.slice(lastSeparator + 1),
-        separator: getPathSeparator(machine, directoryPath)
-    }
-}
-
-function joinDirectoryPath(directoryPath: string, name: string, separator: '/' | '\\'): string {
-    if (directoryPath === separator) {
-        return `${directoryPath}${name}`
-    }
-
-    if (directoryPath.endsWith('/') || directoryPath.endsWith('\\')) {
-        return `${directoryPath}${name}`
-    }
-
-    return `${directoryPath}${separator}${name}`
-}
 
 export function NewSession(props: {
     api: ApiClient
@@ -163,7 +48,6 @@ export function NewSession(props: {
     const { sessions } = useSessions(props.api)
     const isFormDisabled = Boolean(isPending || props.isLoading)
     const { getRecentPaths, addRecentPath, getLastUsedMachineId, setLastUsedMachineId } = useRecentPaths()
-    const { configs: quickStartConfigs, addConfig: addQuickStartConfig } = useQuickStartConfigs()
 
     const [machineId, setMachineId] = useState<string | null>(props.initialMachineId ?? null)
     const [directory, setDirectory] = useState(props.initialDirectory ?? '')
@@ -178,16 +62,7 @@ export function NewSession(props: {
     const [worktreeName, setWorktreeName] = useState('')
     const [directoryCreationConfirmed, setDirectoryCreationConfirmed] = useState(false)
     const [error, setError] = useState<string | null>(null)
-    const [showAdvanced, setShowAdvanced] = useState(loadShowAdvanced)
-    const [nativeAttachSessions, setNativeAttachSessions] = useState<NativeAttachSession[] | null>(null)
-    const [nativeAttachLoading, setNativeAttachLoading] = useState(false)
-    const [nativeAttachImporting, setNativeAttachImporting] = useState<string | null>(null)
-    const [nativeAttachError, setNativeAttachError] = useState<string | null>(null)
     const worktreeInputRef = useRef<HTMLInputElement>(null)
-    const machineDirectoryCacheRef = useRef(new Map<string, DirectoryEntry[]>())
-
-    // Smart default: single machine auto-select
-    const isSingleMachine = props.machines.length === 1
 
     useEffect(() => {
         if (sessionType === 'worktree') {
@@ -198,6 +73,7 @@ export function NewSession(props: {
     useEffect(() => {
         setModel('auto')
         setEffort('auto')
+        setModelReasoningEffort('default')
     }, [agent])
 
     useEffect(() => {
@@ -235,6 +111,7 @@ export function NewSession(props: {
         machineId,
         enabled: agent === 'codex' && Boolean(machineId)
     })
+    const [opencodeSelectedModel, setOpencodeSelectedModel] = useState<string | null>(null)
     const runnerSpawnError = useMemo(
         () => formatRunnerSpawnError(selectedMachine),
         [selectedMachine]
@@ -252,6 +129,27 @@ export function NewSession(props: {
         }
         return options
     }, [codexModelsState.models, model])
+    const cursorModelsState = useCursorModelsForMachine({
+        api: props.api,
+        machineId,
+        enabled: agent === 'cursor' && Boolean(machineId)
+    })
+    const cursorModelOptions = useMemo(() => {
+        const options = [{ value: 'auto', label: 'Default' }]
+        for (const cursorModel of cursorModelsState.availableModels) {
+            if (cursorModel.modelId === 'auto') {
+                continue
+            }
+            options.push({
+                value: cursorModel.modelId,
+                label: cursorModel.name ?? cursorModel.modelId
+            })
+        }
+        if (model !== 'auto' && !options.some((option) => option.value === model)) {
+            options.splice(1, 0, { value: model, label: model })
+        }
+        return options
+    }, [cursorModelsState.availableModels, model])
 
     const recentPaths = useMemo(
         () => getRecentPaths(machineId),
@@ -277,6 +175,40 @@ export function NewSession(props: {
         [allPaths, pathExistence]
     )
 
+    const deferredDirectoryExists = deferredDirectory
+        ? pathExistence[deferredDirectory]
+        : undefined
+    const opencodeModelsState = useOpencodeModelsForCwd({
+        api: props.api,
+        machineId,
+        cwd: deferredDirectory,
+        // Gate on positive existence: typing partial paths must not spawn an
+        // expensive `opencode acp` probe for a non-existent cwd while the
+        // existence check is in flight.
+        enabled: shouldEnableOpencodeModelDiscovery({
+            agent,
+            machineId,
+            cwd: deferredDirectory,
+            cwdExists: deferredDirectoryExists,
+        })
+    })
+    useEffect(() => {
+        // Auto-pick the OpenCode default model when discovery finishes, so the
+        // form has a sensible value if the user hits Enter without scrolling.
+        if (agent !== 'opencode') return
+        if (opencodeSelectedModel !== null) return
+        const fallback = opencodeModelsState.currentModelId
+            ?? opencodeModelsState.availableModels[0]?.modelId
+            ?? null
+        if (fallback) {
+            setOpencodeSelectedModel(fallback)
+        }
+    }, [agent, opencodeSelectedModel, opencodeModelsState.currentModelId, opencodeModelsState.availableModels])
+    useEffect(() => {
+        // Reset selection when agent / machine / directory changes; new probe = new defaults.
+        setOpencodeSelectedModel(null)
+    }, [agent, machineId, deferredDirectory])
+
     const currentDirectoryExists = trimmedDirectory ? pathExistence[trimmedDirectory] : undefined
     const needsDirectoryCreationWarning = sessionType === 'simple' && trimmedDirectory !== '' && currentDirectoryExists === false
     const missingWorktreeDirectory = sessionType === 'worktree' && trimmedDirectory !== '' && currentDirectoryExists === false
@@ -298,20 +230,9 @@ export function NewSession(props: {
         setDirectoryCreationConfirmed(false)
     }, [machineId, sessionType, trimmedDirectory])
 
-    useEffect(() => {
-        machineDirectoryCacheRef.current.clear()
-        setNativeAttachSessions(null)
-        setNativeAttachError(null)
-    }, [machineId])
-
-    useEffect(() => {
-        setNativeAttachSessions(null)
-        setNativeAttachError(null)
-    }, [agent])
-
     const getSuggestions = useCallback(async (query: string): Promise<Suggestion[]> => {
         const lowered = query.toLowerCase()
-        const localSuggestions = verifiedPaths
+        return verifiedPaths
             .filter((path) => path.toLowerCase().includes(lowered))
             .slice(0, 8)
             .map((path) => ({
@@ -319,53 +240,7 @@ export function NewSession(props: {
                 text: path,
                 label: path
             }))
-
-        if (!machineId) {
-            return localSuggestions
-        }
-
-        const lookupTarget = getDirectoryLookupTarget(query, selectedMachine)
-        if (!lookupTarget) {
-            return localSuggestions
-        }
-
-        const cacheKey = `${machineId}:${lookupTarget.directoryPath}`
-        let entries = machineDirectoryCacheRef.current.get(cacheKey)
-
-        if (!entries) {
-            const response = await props.api.listMachineDirectory(machineId, lookupTarget.directoryPath)
-            if (!response.success) {
-                return localSuggestions
-            }
-
-            entries = (response.entries ?? []).filter((entry) => entry.type === 'directory')
-            machineDirectoryCacheRef.current.set(cacheKey, entries)
-        }
-
-        const remoteSuggestions = entries
-            .filter((entry) => lookupTarget.fragment === '' || entry.name.toLowerCase().includes(lookupTarget.fragment.toLowerCase()))
-            .slice(0, 12)
-            .map((entry) => {
-                const fullPath = joinDirectoryPath(lookupTarget.directoryPath, entry.name, lookupTarget.separator)
-                const browsablePath = `${fullPath}${lookupTarget.separator}`
-                return {
-                    key: `machine-directory:${browsablePath}`,
-                    text: browsablePath,
-                    label: browsablePath,
-                    description: selectedMachine ? getMachineTitle(selectedMachine) : undefined
-                }
-            })
-
-        const mergedSuggestions = new Map<string, Suggestion>()
-        for (const suggestion of localSuggestions) {
-            mergedSuggestions.set(suggestion.text, suggestion)
-        }
-        for (const suggestion of remoteSuggestions) {
-            mergedSuggestions.set(suggestion.text, suggestion)
-        }
-
-        return Array.from(mergedSuggestions.values()).slice(0, 12)
-    }, [verifiedPaths, machineId, selectedMachine, props.api])
+    }, [verifiedPaths])
 
     const activeQuery = (!isDirectoryFocused || suppressSuggestions) ? null : directory
 
@@ -437,20 +312,12 @@ export function NewSession(props: {
         }
     }, [suggestions, selectedIndex, moveUp, moveDown, clearSuggestions, handleSuggestionSelect])
 
-    const handleToggleAdvanced = useCallback(() => {
-        setShowAdvanced((prev) => {
-            const next = !prev
-            try { localStorage.setItem(ADVANCED_STORAGE_KEY, next ? 'true' : 'false') } catch { /* ignore */ }
-            return next
-        })
-    }, [])
-
     const chooseFolderCallback = props.onChooseFolder
-    const workspaceRootAvailable = Boolean(selectedMachine?.metadata?.workspaceRoot)
+    const workspaceRootsAvailable = Boolean(selectedMachine?.metadata?.workspaceRoots?.length)
     const handleChooseFolder = useMemo(() => {
-        if (!chooseFolderCallback || !workspaceRootAvailable) return undefined
+        if (!chooseFolderCallback || !workspaceRootsAvailable) return undefined
         return () => chooseFolderCallback({ machineId, directory: trimmedDirectory })
-    }, [chooseFolderCallback, workspaceRootAvailable, machineId, trimmedDirectory])
+    }, [chooseFolderCallback, workspaceRootsAvailable, machineId, trimmedDirectory])
 
     async function handleCreate() {
         if (!machineId || !trimmedDirectory) return
@@ -471,9 +338,11 @@ export function NewSession(props: {
                 return
             }
 
-            const resolvedModel = model !== 'auto' && agent !== 'opencode' ? model : undefined
+            const resolvedModel = agent === 'opencode'
+                ? (opencodeSelectedModel ?? undefined)
+                : (model !== 'auto' ? model : undefined)
             const resolvedEffort = agent === 'claude' && effort !== 'auto' ? effort : undefined
-            const resolvedModelReasoningEffort = agent === 'codex' && modelReasoningEffort !== 'default'
+            const resolvedModelReasoningEffort = (agent === 'codex' || agent === 'opencode') && modelReasoningEffort !== 'default'
                 ? modelReasoningEffort
                 : undefined
             const result = await spawnSession({
@@ -492,15 +361,6 @@ export function NewSession(props: {
                 haptic.notification('success')
                 setLastUsedMachineId(machineId)
                 addRecentPath(machineId, trimmedDirectory)
-                // Save quick-start config
-                const machineName = selectedMachine ? getMachineTitle(selectedMachine) : machineId
-                addQuickStartConfig({
-                    machineId,
-                    machineName,
-                    directory: trimmedDirectory,
-                    agent,
-                    model,
-                })
                 props.onSuccess(result.sessionId)
                 return
             }
@@ -513,127 +373,22 @@ export function NewSession(props: {
         }
     }
 
-    const handleLoadNativeSessions = useCallback(async () => {
-        if (!machineId) return
-        if (agent !== 'claude' && agent !== 'codex') return
-        setNativeAttachLoading(true)
-        setNativeAttachError(null)
-        try {
-            const result = agent === 'claude'
-                ? await props.api.getNativeClaudeSessions(machineId)
-                : await props.api.getNativeCodexSessions(machineId)
-            if (!result.success) {
-                setNativeAttachError(result.error ?? `Failed to list ${agent === 'claude' ? 'Claude' : 'Codex'} CLI sessions`)
-                setNativeAttachSessions([])
-                return
-            }
-            setNativeAttachSessions((result.sessions ?? [])
-                .map((session) => ({
-                    ...session,
-                    agent
-                } as NativeAttachSession))
-                .sort((a, b) => b.updatedAt - a.updatedAt))
-        } catch (error) {
-            setNativeAttachError(error instanceof Error ? error.message : `Failed to list ${agent === 'claude' ? 'Claude' : 'Codex'} CLI sessions`)
-            setNativeAttachSessions([])
-        } finally {
-            setNativeAttachLoading(false)
-        }
-    }, [agent, machineId, props.api])
-
-    const handleImportNativeSession = useCallback(async (session: NativeAttachSession) => {
-        if (!machineId) return
-        const nativeSessionId = session.agent === 'claude' ? session.claudeSessionId : session.codexSessionId
-        setNativeAttachImporting(nativeSessionId)
-        setNativeAttachError(null)
-        try {
-            const result = session.agent === 'claude'
-                ? await props.api.importNativeClaudeSession(machineId, {
-                    claudeSessionId: session.claudeSessionId,
-                    transcriptPath: session.transcriptPath
-                })
-                : await props.api.importNativeCodexSession(machineId, {
-                    codexSessionId: session.codexSessionId,
-                    transcriptPath: session.transcriptPath
-                })
-            if (!result.success) {
-                setNativeAttachError(result.error)
-                return
-            }
-            haptic.notification('success')
-            setLastUsedMachineId(machineId)
-            if (session.cwd) {
-                addRecentPath(machineId, session.cwd)
-            }
-            props.onSuccess(result.sessionId)
-        } catch (error) {
-            haptic.notification('error')
-            setNativeAttachError(error instanceof Error ? error.message : `Failed to import ${session.agent === 'claude' ? 'Claude' : 'Codex'} CLI session`)
-        } finally {
-            setNativeAttachImporting(null)
-        }
-    }, [addRecentPath, haptic, machineId, props, setLastUsedMachineId])
-
-    const [quickStartPending, setQuickStartPending] = useState(false)
-
-    const handleQuickStartSelect = useCallback((config: QuickStartConfig) => {
-        setMachineId(config.machineId)
-        setDirectory(config.directory)
-        setAgent(config.agent)
-        setModel(config.model)
-        setQuickStartPending(true)
-    }, [])
-
-    useEffect(() => {
-        if (!quickStartPending) return
-        if (!machineId || !directory.trim()) return
-        setQuickStartPending(false)
-        handleCreate()
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [quickStartPending, machineId, directory])
-
-    const connectedMachineIds = useMemo(
-        () => new Set(props.machines.map((m) => m.id)),
-        [props.machines]
-    )
-
     const canCreate = Boolean(machineId && trimmedDirectory && !isFormDisabled && !missingWorktreeDirectory)
 
     return (
         <div className="flex flex-col divide-y divide-[var(--app-divider)]">
-            {/* Quick-start cards */}
-            <QuickStartCards
-                configs={quickStartConfigs}
+            <MachineSelector
+                machines={props.machines}
+                machineId={machineId}
+                isLoading={props.isLoading}
                 isDisabled={isFormDisabled}
-                connectedMachineIds={connectedMachineIds}
-                onSelect={handleQuickStartSelect}
+                onChange={handleMachineChange}
             />
-
-            {/* Machine selector: show as chip if single machine, full dropdown otherwise */}
-            {isSingleMachine && selectedMachine ? (
-                <div className="flex items-center gap-2 px-3 py-2">
-                    <span className="text-xs text-[var(--app-hint)]">{t('newSession.machine')}:</span>
-                    <span className="rounded bg-[var(--app-subtle-bg)] px-2 py-0.5 text-xs text-[var(--app-fg)]">
-                        {getMachineTitle(selectedMachine)}
-                        {selectedMachine.metadata?.platform ? ` (${selectedMachine.metadata.platform})` : ''}
-                    </span>
-                </div>
-            ) : (
-                <MachineSelector
-                    machines={props.machines}
-                    machineId={machineId}
-                    isLoading={props.isLoading}
-                    isDisabled={isFormDisabled}
-                    onChange={handleMachineChange}
-                />
-            )}
             {runnerSpawnError ? (
                 <div className="px-3 py-2 text-xs text-red-600">
                     Runner last spawn error: {runnerSpawnError}
                 </div>
             ) : null}
-
-            {/* Directory - always visible */}
             <DirectorySection
                 directory={directory}
                 suggestions={suggestions}
@@ -650,135 +405,76 @@ export function NewSession(props: {
                 onPathClick={handlePathClick}
                 onChooseFolder={handleChooseFolder}
             />
-
-            {/* Agent - always visible */}
+            <SessionTypeSelector
+                sessionType={sessionType}
+                worktreeName={worktreeName}
+                worktreeInputRef={worktreeInputRef}
+                isDisabled={isFormDisabled}
+                onSessionTypeChange={setSessionType}
+                onWorktreeNameChange={setWorktreeName}
+            />
             <AgentSelector
                 agent={agent}
                 isDisabled={isFormDisabled}
                 onAgentChange={setAgent}
             />
-
-            {(agent === 'claude' || agent === 'codex') && machineId ? (
-                <div className="space-y-2 px-3 py-2.5">
-                    <div className="flex items-center justify-between gap-3">
-                        <div>
-                            <div className="text-xs font-medium text-[var(--app-fg)]">
-                                {agent === 'claude' ? 'Claude Code sessions' : 'Codex CLI sessions'}
-                            </div>
-                            <div className="text-xs text-[var(--app-hint)]">
-                                Attach a native {agent === 'claude' ? 'Claude Code' : 'Codex'} transcript. Most recently updated first.
-                            </div>
-                        </div>
-                        <button
-                            type="button"
-                            className="shrink-0 rounded border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] disabled:opacity-50"
-                            disabled={isFormDisabled || nativeAttachLoading}
-                            onClick={handleLoadNativeSessions}
-                        >
-                            {nativeAttachLoading ? 'Scanning...' : 'Scan'}
-                        </button>
-                    </div>
-                    {nativeAttachError ? (
-                        <div className="text-xs text-red-600">{nativeAttachError}</div>
-                    ) : null}
-                    {nativeAttachSessions ? (
-                        nativeAttachSessions.length === 0 ? (
-                            <div className="text-xs text-[var(--app-hint)]">
-                                No native {agent === 'claude' ? 'Claude Code' : 'Codex'} sessions found.
-                            </div>
-                        ) : (
-                            <div className="max-h-48 overflow-y-auto rounded border border-[var(--app-border)]">
-                                {nativeAttachSessions.slice(0, 20).map((session) => {
-                                    const nativeSessionId = session.agent === 'claude' ? session.claudeSessionId : session.codexSessionId
-                                    const isImporting = nativeAttachImporting === nativeSessionId
-                                    return (
-                                        <button
-                                            key={`${session.agent}:${nativeSessionId}:${session.transcriptPath}`}
-                                            type="button"
-                                            className="flex w-full items-center justify-between gap-3 border-b border-[var(--app-border)] px-2 py-2 text-left last:border-b-0 hover:bg-[var(--app-subtle-bg)] disabled:opacity-50"
-                                            disabled={isFormDisabled || Boolean(nativeAttachImporting)}
-                                            onClick={() => handleImportNativeSession(session)}
-                                        >
-                                            <span className="min-w-0">
-                                                <span className="block truncate text-xs font-medium text-[var(--app-fg)]">{session.title}</span>
-                                                <span className="block truncate text-[11px] text-[var(--app-hint)]">
-                                                    {formatNativeSessionDetails(session)}
-                                                </span>
-                                                <span className="block truncate text-xs text-[var(--app-hint)]">
-                                                    {session.cwd ?? session.transcriptPath}
-                                                </span>
-                                            </span>
-                                            <span className="shrink-0 text-xs text-[var(--app-link)]">
-                                                {isImporting ? 'Importing...' : 'Import'}
-                                            </span>
-                                        </button>
-                                    )
-                                })}
-                            </div>
-                        )
-                    ) : null}
-                </div>
-            ) : null}
-
-            {/* Advanced options toggle */}
-            <button
-                type="button"
-                onClick={handleToggleAdvanced}
-                className="flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium text-[var(--app-link)] hover:text-[var(--app-link-hover)] transition-colors"
-            >
-                <svg
-                    className={`h-3 w-3 transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2.5}
-                >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-                {t('newSession.advancedOptions')}
-            </button>
-
-            {/* Advanced options section */}
-            {showAdvanced && (
-                <>
-                    <ModelSelector
-                        agent={agent}
-                        model={model}
-                        options={agent === 'codex' ? codexModelOptions : undefined}
-                        isDisabled={isFormDisabled || (agent === 'codex' && Boolean(codexModelsState.error))}
-                        isLoading={agent === 'codex' && codexModelsState.isLoading}
-                        error={agent === 'codex' && codexModelsState.error
-                            ? `${t('newSession.model.loadFailed')}: ${codexModelsState.error}`
-                            : null}
-                        onModelChange={setModel}
-                    />
-                    <ClaudeEffortSelector
-                        agent={agent}
-                        effort={effort}
-                        isDisabled={isFormDisabled}
-                        onEffortChange={setEffort}
-                    />
-                    <ReasoningEffortSelector
-                        agent={agent}
-                        value={modelReasoningEffort}
-                        isDisabled={isFormDisabled}
-                        onChange={setModelReasoningEffort}
-                    />
-                    <YoloToggle
-                        yoloMode={yoloMode}
-                        isDisabled={isFormDisabled}
-                        onToggle={setYoloMode}
-                    />
-                    <SessionTypeSelector
-                        sessionType={sessionType}
-                        worktreeName={worktreeName}
-                        worktreeInputRef={worktreeInputRef}
-                        isDisabled={isFormDisabled}
-                        onSessionTypeChange={setSessionType}
-                        onWorktreeNameChange={setWorktreeName}
-                    />
-                </>
+            {agent === 'opencode' ? (
+                <OpencodeModelSelector
+                    cwd={deferredDirectory}
+                    machineId={machineId}
+                    isLoading={opencodeModelsState.isLoading}
+                    error={opencodeModelsState.error}
+                    availableModels={opencodeModelsState.availableModels}
+                    currentModelId={opencodeModelsState.currentModelId}
+                    selectedModel={opencodeSelectedModel}
+                    onModelChange={setOpencodeSelectedModel}
+                    onRetry={opencodeModelsState.refetch}
+                />
+            ) : (
+                <ModelSelector
+                    agent={agent}
+                    model={model}
+                    options={
+                        agent === 'codex'
+                            ? codexModelOptions
+                            : agent === 'cursor'
+                                ? cursorModelOptions
+                                : undefined
+                    }
+                    isDisabled={
+                        isFormDisabled
+                        || (agent === 'codex' && Boolean(codexModelsState.error))
+                        || (agent === 'cursor' && Boolean(cursorModelsState.error))
+                    }
+                    isLoading={
+                        (agent === 'codex' && codexModelsState.isLoading)
+                        || (agent === 'cursor' && cursorModelsState.isLoading)
+                    }
+                    error={agent === 'codex' && codexModelsState.error
+                        ? `${t('newSession.model.loadFailed')}: ${codexModelsState.error}`
+                        : agent === 'cursor' && cursorModelsState.error
+                            ? `${t('newSession.model.loadFailed')}: ${cursorModelsState.error}`
+                        : null}
+                    onModelChange={setModel}
+                />
             )}
+            <ClaudeEffortSelector
+                agent={agent}
+                effort={effort}
+                isDisabled={isFormDisabled}
+                onEffortChange={setEffort}
+            />
+            <ReasoningEffortSelector
+                agent={agent}
+                value={modelReasoningEffort}
+                isDisabled={isFormDisabled}
+                onChange={setModelReasoningEffort}
+            />
+            <YoloToggle
+                yoloMode={yoloMode}
+                isDisabled={isFormDisabled}
+                onToggle={setYoloMode}
+            />
 
             {(error ?? spawnError) ? (
                 <div className="px-3 py-2 text-sm text-red-600">

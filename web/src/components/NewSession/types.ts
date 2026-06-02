@@ -1,49 +1,54 @@
 import {
     CLAUDE_EFFORT_LABELS,
-    CLAUDE_EFFORT_PRESETS,
-    CODEX_MODEL_LABELS,
-    CODEX_MODEL_PRESETS,
-    CODEX_REASONING_EFFORTS,
-    CODEX_REASONING_EFFORT_LABELS,
+    CLAUDE_EFFORT_LEVELS,
+    CLAUDE_MODEL_LABELS,
+    CLAUDE_MODEL_PRESETS,
     GEMINI_MODEL_LABELS,
-    GEMINI_MODEL_PRESETS,
-    getClaudeModelDisplayLabel,
-    getModelDisplayLabel,
+    GEMINI_MODEL_PRESETS
 } from '@hapi/protocol'
+import type { AgentFlavor, ClaudeEffortLevel } from '@hapi/protocol'
 
-export type AgentType = 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
+export type AgentType = AgentFlavor
 export type SessionType = 'simple' | 'worktree'
-// Composer carries the literal enum the CLI validates against, plus a 'default'
-// sentinel the UI collapses to null before sending.
-export type CodexReasoningEffort = 'default' | typeof CODEX_REASONING_EFFORTS[number]
-export type ClaudeEffort = 'auto' | typeof CLAUDE_EFFORT_PRESETS[number]
+export type CodexReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type ClaudeEffort = 'auto' | ClaudeEffortLevel
 
-// UI display order; labels come from shared so there's only one place to update.
-const CLAUDE_DISPLAY_ORDER = ['opus', 'opus[1m]', 'sonnet', 'sonnet[1m]'] as const
+function modelPresetOptions<TModel extends string>(
+    presets: readonly TModel[],
+    labels: Record<TModel, string>
+): { value: string; label: string }[] {
+    return presets.map(model => ({ value: model, label: labels[model] }))
+}
 
 export const MODEL_OPTIONS: Record<AgentType, { value: string; label: string }[]> = {
     claude: [
         { value: 'auto', label: 'Default' },
-        ...CLAUDE_DISPLAY_ORDER.map(m => ({ value: m, label: getClaudeModelDisplayLabel(m, { includeValue: true }) ?? m })),
+        ...modelPresetOptions(CLAUDE_MODEL_PRESETS, CLAUDE_MODEL_LABELS),
     ],
     codex: [
         { value: 'auto', label: 'Default' },
-        ...CODEX_MODEL_PRESETS.map(m => ({ value: m, label: getModelDisplayLabel(m, CODEX_MODEL_LABELS[m]) ?? m })),
     ],
     cursor: [],
+    kimi: [
+        { value: 'auto', label: 'Default' },
+    ],
     gemini: [
         { value: 'auto', label: 'Default' },
-        ...GEMINI_MODEL_PRESETS.map(m => ({ value: m, label: getModelDisplayLabel(m, GEMINI_MODEL_LABELS[m]) ?? m })),
+        ...modelPresetOptions(GEMINI_MODEL_PRESETS, GEMINI_MODEL_LABELS),
     ],
     opencode: [],
 }
 
 export const CODEX_REASONING_EFFORT_OPTIONS: { value: CodexReasoningEffort; label: string }[] = [
     { value: 'default', label: 'Default' },
-    ...CODEX_REASONING_EFFORTS.map(e => ({ value: e, label: CODEX_REASONING_EFFORT_LABELS[e] })),
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' },
+    { value: 'xhigh', label: 'XHigh' },
+    { value: 'max', label: 'Max' },
 ]
 
 export const CLAUDE_EFFORT_OPTIONS: { value: ClaudeEffort; label: string }[] = [
     { value: 'auto', label: 'Auto' },
-    ...CLAUDE_EFFORT_PRESETS.map(e => ({ value: e, label: CLAUDE_EFFORT_LABELS[e] })),
+    ...CLAUDE_EFFORT_LEVELS.map((value) => ({ value, label: CLAUDE_EFFORT_LABELS[value] })),
 ]

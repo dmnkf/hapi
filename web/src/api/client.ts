@@ -2,20 +2,9 @@ import type {
     AttachmentMetadata,
     AuthResponse,
     CodexCollaborationMode,
-    DeleteUploadResponse,
-    ListDirectoryResponse,
-    FileReadResponse,
     FileSearchResponse,
-    GitCommandResponse,
-    MachineListDirectoryResponse,
-    MachinePathsExistsResponse,
     MachinesResponse,
     MessagesResponse,
-    NativeClaudeSessionsResponse,
-    NativeCodexSessionsResponse,
-    ImportNativeClaudeSessionResponse,
-    ImportNativeCodexSessionResponse,
-    CodexModelsResponse,
     PermissionMode,
     PushSubscriptionPayload,
     PushUnsubscribePayload,
@@ -23,11 +12,24 @@ import type {
     SlashCommandsResponse,
     SkillsResponse,
     SpawnResponse,
-    UploadFileResponse,
     VisibilityPayload,
     SessionResponse,
     SessionsResponse
 } from '@/types/api'
+import type {
+    CodexModelsResponse,
+    CursorModelsResponse,
+    DeleteUploadResponse,
+    FileReadResponse,
+    GitCommandResponse,
+    ListDirectoryResponse,
+    MachineListDirectoryResponse,
+    MachinePathsExistsResponse,
+    OpencodeModelsResponse,
+    UploadFileResponse
+} from '@hapi/protocol/apiTypes'
+import type { AgentFlavor } from '@hapi/protocol'
+import type { CancelMessageResponse } from '@hapi/protocol/schemas'
 
 type ApiClientOptions = {
     baseUrl?: string
@@ -122,9 +124,7 @@ export class ApiClient {
 
         if (!res.ok) {
             const body = await res.text().catch(() => '')
-            const code = parseErrorCode(body)
-            const detail = body ? `: ${body}` : ''
-            throw new ApiError(`HTTP ${res.status} ${res.statusText}${detail}`, res.status, code, body || undefined)
+            throw new Error(`HTTP ${res.status} ${res.statusText}: ${body}`)
         }
 
         return await res.json() as T
@@ -197,8 +197,18 @@ export class ApiClient {
         return await this.request<SessionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}`)
     }
 
-    async getMessages(sessionId: string, options: { beforeSeq?: number | null; limit?: number }): Promise<MessagesResponse> {
+    async getMessages(
+        sessionId: string,
+        options: {
+            beforeSeq?: number | null
+            beforeAt?: number | null
+            limit?: number
+        }
+    ): Promise<MessagesResponse> {
         const params = new URLSearchParams()
+        if (options.beforeAt !== undefined && options.beforeAt !== null) {
+            params.set('beforeAt', `${options.beforeAt}`)
+        }
         if (options.beforeSeq !== undefined && options.beforeSeq !== null) {
             params.set('beforeSeq', `${options.beforeSeq}`)
         }
@@ -240,6 +250,31 @@ export class ApiClient {
         }
         const qs = params.toString()
         return await this.request<FileSearchResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/files${qs ? `?${qs}` : ''}`)
+    }
+
+    async getGeneratedImageBlob(sessionId: string, imageId: string, attempt: number = 0, overrideToken?: string | null): Promise<Blob> {
+        const headers = new Headers()
+        const liveToken = this.getToken ? this.getToken() : null
+        const authToken = overrideToken !== undefined
+            ? (overrideToken ?? (liveToken ?? this.token))
+            : (liveToken ?? this.token)
+        if (authToken) {
+            headers.set('authorization', `Bearer ${authToken}`)
+        }
+        const res = await fetch(this.buildUrl(`/api/sessions/${encodeURIComponent(sessionId)}/generated-images/${encodeURIComponent(imageId)}`), {
+            headers
+        })
+        if (res.status === 401 && attempt === 0 && this.onUnauthorized) {
+            const refreshed = await this.onUnauthorized()
+            if (refreshed) {
+                this.token = refreshed
+                return await this.getGeneratedImageBlob(sessionId, imageId, attempt + 1, refreshed)
+            }
+        }
+        if (!res.ok) {
+            throw new ApiError(`HTTP ${res.status}`, res.status, undefined, await res.text().catch(() => undefined))
+        }
+        return await res.blob()
     }
 
     async readSessionFile(sessionId: string, path: string): Promise<FileReadResponse> {
@@ -287,15 +322,24 @@ export class ApiClient {
         return response.sessionId
     }
 
-    async sendMessage(sessionId: string, text: string, localId?: string | null, attachments?: AttachmentMetadata[]): Promise<void> {
+    async sendMessage(sessionId: string, text: string, localId?: string | null, attachments?: AttachmentMetadata[], scheduledAt?: number | null): Promise<void> {
         await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
             method: 'POST',
             body: JSON.stringify({
                 text,
                 localId: localId ?? undefined,
-                attachments: attachments ?? undefined
+                attachments: attachments ?? undefined,
+                scheduledAt: scheduledAt ?? undefined
             })
         })
+    }
+
+    async cancelMessage(sessionId: string, messageId: string): Promise<CancelMessageResponse> {
+        const response = await this.request(
+            `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
+            { method: 'DELETE' }
+        )
+        return response as CancelMessageResponse
     }
 
     async abortSession(sessionId: string): Promise<void> {
@@ -419,7 +463,7 @@ export class ApiClient {
     async spawnSession(
         machineId: string,
         directory: string,
-        agent?: 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode',
+        agent?: AgentFlavor,
         model?: string,
         modelReasoningEffort?: string,
         yolo?: boolean,
@@ -439,47 +483,33 @@ export class ApiClient {
         )
     }
 
-    async getNativeCodexSessions(machineId: string): Promise<NativeCodexSessionsResponse> {
-        return await this.request<NativeCodexSessionsResponse>(
-            `/api/machines/${encodeURIComponent(machineId)}/native-codex-sessions`
-        )
-    }
-
-    async getNativeClaudeSessions(machineId: string): Promise<NativeClaudeSessionsResponse> {
-        return await this.request<NativeClaudeSessionsResponse>(
-            `/api/machines/${encodeURIComponent(machineId)}/native-claude-sessions`
-        )
-    }
-
-    async importNativeCodexSession(
-        machineId: string,
-        options: { codexSessionId?: string; transcriptPath?: string }
-    ): Promise<ImportNativeCodexSessionResponse> {
-        return await this.request<ImportNativeCodexSessionResponse>(
-            `/api/machines/${encodeURIComponent(machineId)}/native-codex-sessions/import`,
-            {
-                method: 'POST',
-                body: JSON.stringify(options)
-            }
-        )
-    }
-
-    async importNativeClaudeSession(
-        machineId: string,
-        options: { claudeSessionId?: string; transcriptPath?: string }
-    ): Promise<ImportNativeClaudeSessionResponse> {
-        return await this.request<ImportNativeClaudeSessionResponse>(
-            `/api/machines/${encodeURIComponent(machineId)}/native-claude-sessions/import`,
-            {
-                method: 'POST',
-                body: JSON.stringify(options)
-            }
-        )
-    }
-
     async getSessionCodexModels(sessionId: string): Promise<CodexModelsResponse> {
         return await this.request<CodexModelsResponse>(
             `/api/sessions/${encodeURIComponent(sessionId)}/codex-models`
+        )
+    }
+
+    async getSessionOpencodeModels(sessionId: string): Promise<OpencodeModelsResponse> {
+        return await this.request<OpencodeModelsResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/opencode-models`
+        )
+    }
+
+    async getSessionCursorModels(sessionId: string): Promise<CursorModelsResponse> {
+        return await this.request<CursorModelsResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/cursor-models`
+        )
+    }
+
+    async getMachineCursorModels(machineId: string): Promise<CursorModelsResponse> {
+        return await this.request<CursorModelsResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/cursor-models`
+        )
+    }
+
+    async getMachineOpencodeModelsForCwd(machineId: string, cwd: string): Promise<OpencodeModelsResponse> {
+        return await this.request<OpencodeModelsResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/opencode-models?cwd=${encodeURIComponent(cwd)}`
         )
     }
 
@@ -508,7 +538,7 @@ export class ApiClient {
         })
     }
 
-    async fetchVoiceToken(options?: { customAgentId?: string; customApiKey?: string }): Promise<{
+    async fetchVoiceToken(options?: { customAgentId?: string; customApiKey?: string; voiceId?: string }): Promise<{
         allowed: boolean
         token?: string
         agentId?: string
@@ -517,6 +547,24 @@ export class ApiClient {
         return await this.request('/api/voice/token', {
             method: 'POST',
             body: JSON.stringify(options || {})
+        })
+    }
+
+    async fetchVoices(): Promise<{ voices: Array<{ id: string; name: string; previewUrl: string; category: string }> }> {
+        return await this.request('/api/voice/voices')
+    }
+
+    async sendVoiceTelemetry(event: {
+        stage: string
+        message: string
+        sessionId?: string
+        voiceId?: string
+        language?: string
+        details?: Record<string, unknown>
+    }): Promise<void> {
+        await this.request('/api/voice/telemetry', {
+            method: 'POST',
+            body: JSON.stringify(event)
         })
     }
 }

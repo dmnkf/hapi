@@ -1,7 +1,6 @@
 import { MODEL_OPTIONS } from '@/components/NewSession/types'
 import { getClaudeComposerModelOptions, getNextClaudeComposerModel } from './claudeModelOptions'
 import type { ClaudeComposerModelOption } from './claudeModelOptions'
-import { getModelDisplayLabel, type SessionCapabilities } from '@hapi/protocol'
 
 export type ModelOption = ClaudeComposerModelOption
 
@@ -29,32 +28,40 @@ function withCurrentModelOption(options: ModelOption[], currentModel?: string | 
     return nextOptions
 }
 
-function getRuntimeModelOptions(
-    currentModel?: string | null,
-    capabilities?: SessionCapabilities,
-    opts?: { includeAuto?: boolean; autoLabel?: string }
-): ModelOption[] | null {
-    const runtimeModels = capabilities?.models
-    if (!runtimeModels || runtimeModels.length === 0) {
-        return null
+function getClaudeModelOptions(currentModel?: string | null, customOptions?: ModelOption[]): ModelOption[] {
+    if (!customOptions || customOptions.length === 0) {
+        return getClaudeComposerModelOptions(currentModel)
     }
 
-    const options = [
-        ...(opts?.includeAuto === false ? [] : [{ value: null, label: opts?.autoLabel ?? 'Auto' }]),
-        ...runtimeModels.map((model) => ({
-            value: model.id,
-            label: getModelDisplayLabel(model.id, model.label) ?? model.id
-        }))
-    ]
-    return withCurrentModelOption(options, currentModel)
+    const options = getClaudeComposerModelOptions(currentModel)
+    const nextOptions = [...options]
+    let insertIndex = Math.max(1, nextOptions.findIndex((option) => option.value !== null))
+
+    for (const option of customOptions) {
+        const normalizedValue = normalizeCurrentModel(option.value)
+        if (!normalizedValue) {
+            continue
+        }
+
+        const existingIndex = nextOptions.findIndex((nextOption) => nextOption.value === normalizedValue)
+        if (existingIndex >= 0) {
+            if (nextOptions[existingIndex]?.label === normalizedValue) {
+                nextOptions[existingIndex] = option
+            }
+            continue
+        }
+
+        nextOptions.splice(insertIndex, 0, {
+            value: normalizedValue,
+            label: option.label
+        })
+        insertIndex += 1
+    }
+
+    return nextOptions
 }
 
-function getGeminiModelOptions(currentModel?: string | null, capabilities?: SessionCapabilities): ModelOption[] {
-    const runtimeOptions = getRuntimeModelOptions(currentModel, capabilities)
-    if (runtimeOptions) {
-        return runtimeOptions
-    }
-
+function getGeminiModelOptions(currentModel?: string | null): ModelOption[] {
     const options = MODEL_OPTIONS.gemini.map((m) => ({
         value: m.value === 'auto' ? null : m.value,
         label: m.label
@@ -62,22 +69,9 @@ function getGeminiModelOptions(currentModel?: string | null, capabilities?: Sess
     return withCurrentModelOption(options, currentModel)
 }
 
-function getNextGeminiModel(currentModel?: string | null, capabilities?: SessionCapabilities): string | null {
-    const options = getGeminiModelOptions(currentModel, capabilities)
-    const currentIndex = options.findIndex((option) => option.value === (normalizeCurrentModel(currentModel) ?? null))
-    if (currentIndex === -1) {
-        return options.find((option) => option.value !== null)?.value ?? null
-    }
-    return options[(currentIndex + 1) % options.length]?.value ?? null
-}
-
-function getCodexModelOptions(currentModel?: string | null, capabilities?: SessionCapabilities): ModelOption[] {
-    return getRuntimeModelOptions(currentModel, capabilities, { includeAuto: false }) ?? []
-}
-
-function getNextCodexModel(currentModel?: string | null, capabilities?: SessionCapabilities): string | null {
-    const options = getCodexModelOptions(currentModel, capabilities)
-    const currentIndex = options.findIndex((option) => option.value === (normalizeCurrentModel(currentModel) ?? null))
+function getNextGeminiModel(currentModel?: string | null): string | null {
+    const options = getGeminiModelOptions(currentModel)
+    const currentIndex = options.findIndex((o) => o.value === (currentModel ?? null))
     if (currentIndex === -1) {
         return options[0]?.value ?? null
     }
@@ -87,29 +81,48 @@ function getNextCodexModel(currentModel?: string | null, capabilities?: SessionC
 export function getModelOptionsForFlavor(
     flavor: string | undefined | null,
     currentModel?: string | null,
-    capabilities?: SessionCapabilities,
     customOptions?: ModelOption[]
 ): ModelOption[] {
+    if (flavor === 'claude') {
+        return getClaudeModelOptions(currentModel, customOptions)
+    }
     if (customOptions && customOptions.length > 0) {
         return withCurrentModelOption(customOptions, currentModel)
     }
     if (flavor === 'gemini') {
-        return getGeminiModelOptions(currentModel, capabilities)
+        return getGeminiModelOptions(currentModel)
     }
-    if (flavor === 'codex') {
-        return getCodexModelOptions(currentModel, capabilities)
+    // OpenCode discovers models dynamically via the listOpencodeModels RPC. Until
+    // those options arrive, render an empty list rather than the Claude fallback —
+    // the latter would surface unrelated Claude models in an OpenCode session.
+    if (flavor === 'opencode') {
+        return []
     }
-    return getClaudeComposerModelOptions(currentModel)
+    if (flavor === 'cursor') {
+        return withCurrentModelOption([{ value: null, label: 'Default' }], currentModel)
+    }
+    // Kimi has no predefined model list — show just the auto/default option.
+    if (flavor === 'kimi') {
+        return withCurrentModelOption([{ value: null, label: 'Default' }], currentModel)
+    }
+    return getClaudeModelOptions(currentModel)
 }
 
 export function getNextModelForFlavor(
     flavor: string | undefined | null,
     currentModel?: string | null,
-    capabilities?: SessionCapabilities,
     customOptions?: ModelOption[]
 ): string | null {
+    if (flavor === 'claude') {
+        const options = getClaudeModelOptions(currentModel, customOptions)
+        const currentIndex = options.findIndex((option) => option.value === (normalizeCurrentModel(currentModel) ?? null))
+        if (currentIndex === -1) {
+            return options[0]?.value ?? null
+        }
+        return options[(currentIndex + 1) % options.length]?.value ?? null
+    }
     if (customOptions && customOptions.length > 0) {
-        const options = getModelOptionsForFlavor(flavor, currentModel, capabilities, customOptions)
+        const options = getModelOptionsForFlavor(flavor, currentModel, customOptions)
         const currentIndex = options.findIndex((option) => option.value === (normalizeCurrentModel(currentModel) ?? null))
         if (currentIndex === -1) {
             return options.find((option) => option.value !== null)?.value ?? null
@@ -117,10 +130,21 @@ export function getNextModelForFlavor(
         return options[(currentIndex + 1) % options.length]?.value ?? null
     }
     if (flavor === 'gemini') {
-        return getNextGeminiModel(currentModel, capabilities)
+        return getNextGeminiModel(currentModel)
     }
-    if (flavor === 'codex') {
-        return getNextCodexModel(currentModel, capabilities)
+    // OpenCode discovers models dynamically via the listOpencodeModels RPC. Until
+    // those options arrive, pressing the Ctrl/Cmd+M shortcut must not fall through
+    // to the Claude preset cycler — that would post `sonnet`/`opus` into an
+    // OpenCode session and the next turn would attempt `session/set_model` with a
+    // Claude id. Keep the current model unchanged instead.
+    if (flavor === 'opencode') {
+        return normalizeCurrentModel(currentModel)
+    }
+    if (flavor === 'cursor') {
+        return normalizeCurrentModel(currentModel)
+    }
+    if (flavor === 'kimi') {
+        return normalizeCurrentModel(currentModel)
     }
     return getNextClaudeComposerModel(currentModel)
 }

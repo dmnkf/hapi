@@ -10,7 +10,7 @@ export function OfflineBanner() {
     }
 
     return (
-        <div className="glass-bar fixed top-0 left-0 right-0 text-[var(--app-badge-warning-text)] text-center py-2 text-sm font-medium z-50 border-b border-[var(--app-badge-warning-border)]">
+        <div className="fixed top-0 left-0 right-0 bg-amber-500 text-white text-center py-2 text-sm font-medium z-50">
             {t('offline.message')}
         </div>
     )

@@ -1,12 +1,24 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { createRequire } from 'node:module'
 
-const require = createRequire(import.meta.url)
 const base = process.env.VITE_BASE_URL || '/'
 const hubTarget = process.env.VITE_HUB_PROXY || 'http://127.0.0.1:3006'
+const appVersion = readAppVersion()
+
+function readAppVersion(): string {
+    const buildInfoPath = resolve(__dirname, '../shared/src/buildInfo.ts')
+    const buildInfo = readFileSync(buildInfoPath, 'utf8')
+    const match = buildInfo.match(/export const APP_VERSION = ['"]([^'"]+)['"]/)
+
+    if (!match) {
+        throw new Error(`Could not read APP_VERSION from ${buildInfoPath}`)
+    }
+
+    return match[1]
+}
 
 function getVendorChunkName(id: string): string | undefined {
     if (!id.includes('/node_modules/')) {
@@ -34,7 +46,7 @@ function getVendorChunkName(id: string): string | undefined {
 
 export default defineConfig({
     define: {
-        __APP_VERSION__: JSON.stringify(require('../cli/package.json').version),
+        __APP_VERSION__: JSON.stringify(appVersion),
     },
     server: {
         host: true,

@@ -123,7 +123,6 @@ export function TerminalView(props: {
     return (
         <div
             ref={containerRef}
-            data-no-swipe
             className={`h-full w-full ${props.className ?? ''}`}
         />
     )

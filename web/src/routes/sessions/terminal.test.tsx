@@ -1,70 +1,100 @@
-/**
- * @vitest-environment node
- *
- * TerminalPage renders a heavy component tree (xterm.js + canvas addons)
- * that exceeds jsdom's memory limits. These tests validate the paste
- * logic by extracting and testing it directly without rendering.
- */
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { I18nProvider } from '@/lib/i18n-context'
+import TerminalPage from './terminal'
 
-/**
- * Extracted paste logic matching TerminalPage.handlePaste behavior:
- * 1. Try navigator.clipboard.readText()
- * 2. If clipboard returns text, write it to the terminal
- * 3. If clipboard is empty, do nothing
- * 4. If clipboard throws, open the manual paste dialog
- */
-async function handlePaste(
-    readClipboard: () => Promise<string>,
-    write: (data: string) => void,
-    openManualDialog: () => void
-): Promise<void> {
-    try {
-        const text = await readClipboard()
-        if (text) {
-            write(text)
+const writeMock = vi.fn()
+
+vi.mock('@tanstack/react-router', () => ({
+    useParams: () => ({ sessionId: 'session-1' })
+}))
+
+vi.mock('@/lib/app-context', () => ({
+    useAppContext: () => ({
+        api: null,
+        token: 'test-token',
+        baseUrl: 'http://localhost:3000'
+    })
+}))
+
+vi.mock('@/hooks/useAppGoBack', () => ({
+    useAppGoBack: () => vi.fn()
+}))
+
+vi.mock('@/hooks/queries/useSession', () => ({
+    useSession: () => ({
+        session: {
+            id: 'session-1',
+            active: true,
+            metadata: { path: '/tmp/project' }
         }
-    } catch {
-        openManualDialog()
-    }
+    })
+}))
+
+vi.mock('@/hooks/useTerminalSocket', () => ({
+    useTerminalSocket: () => ({
+        state: { status: 'connected' as const },
+        connect: vi.fn(),
+        write: writeMock,
+        resize: vi.fn(),
+        disconnect: vi.fn(),
+        onOutput: vi.fn(),
+        onExit: vi.fn()
+    })
+}))
+
+vi.mock('@/hooks/useLongPress', () => ({
+    useLongPress: ({ onClick }: { onClick: () => void }) => ({
+        onClick
+    })
+}))
+
+vi.mock('@/components/Terminal/TerminalView', () => ({
+    TerminalView: () => <div data-testid="terminal-view" />
+}))
+
+function renderWithProviders() {
+    return render(
+        <I18nProvider>
+            <TerminalPage />
+        </I18nProvider>
+    )
 }
 
 describe('TerminalPage paste behavior', () => {
-    it('writes clipboard text to terminal when available', async () => {
-        const write = vi.fn()
-        const openDialog = vi.fn()
-        const readClipboard = vi.fn(async () => 'hello world')
-
-        await handlePaste(readClipboard, write, openDialog)
-
-        expect(readClipboard).toHaveBeenCalledTimes(1)
-        expect(write).toHaveBeenCalledWith('hello world')
-        expect(openDialog).not.toHaveBeenCalled()
+    beforeEach(() => {
+        vi.clearAllMocks()
     })
 
-    it('does not write or open dialog when clipboard text is empty', async () => {
-        const write = vi.fn()
-        const openDialog = vi.fn()
-        const readClipboard = vi.fn(async () => '')
+    it('does not open manual paste dialog when clipboard text is empty', async () => {
+        const readText = vi.fn(async () => '')
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: { readText }
+        })
 
-        await handlePaste(readClipboard, write, openDialog)
+        renderWithProviders()
+        fireEvent.click(screen.getAllByRole('button', { name: 'Paste' })[0])
 
-        expect(readClipboard).toHaveBeenCalledTimes(1)
-        expect(write).not.toHaveBeenCalled()
-        expect(openDialog).not.toHaveBeenCalled()
+        await waitFor(() => {
+            expect(readText).toHaveBeenCalledTimes(1)
+        })
+        expect(writeMock).not.toHaveBeenCalled()
+        expect(screen.queryByText('Paste input')).not.toBeInTheDocument()
     })
 
     it('opens manual paste dialog when clipboard read fails', async () => {
-        const write = vi.fn()
-        const openDialog = vi.fn()
-        const readClipboard = vi.fn(async () => {
+        const readText = vi.fn(async () => {
             throw new Error('blocked')
         })
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: { readText }
+        })
 
-        await handlePaste(readClipboard, write, openDialog)
+        renderWithProviders()
+        fireEvent.click(screen.getAllByRole('button', { name: 'Paste' })[0])
 
-        expect(readClipboard).toHaveBeenCalledTimes(1)
-        expect(write).not.toHaveBeenCalled()
-        expect(openDialog).toHaveBeenCalledTimes(1)
+        expect(await screen.findByText('Paste input')).toBeInTheDocument()
     })
 })

@@ -44,6 +44,22 @@ export interface ModelListResponse {
     [key: string]: unknown;
 }
 
+export interface CollaborationModeListItem {
+    name?: string;
+    mode?: 'plan' | 'default' | string | null;
+    model?: string | null;
+    reasoning_effort?: ReasoningEffort | null;
+    [key: string]: unknown;
+}
+
+export interface CollaborationModeListResponse {
+    data?: Array<CollaborationModeListItem | string>;
+    modes?: Array<CollaborationModeListItem | string>;
+    collaborationModes?: Array<CollaborationModeListItem | string>;
+    items?: Array<CollaborationModeListItem | string>;
+    [key: string]: unknown;
+}
+
 export interface ThreadStartParams {
     model?: string;
     modelProvider?: string;
@@ -160,6 +176,16 @@ export interface TurnStartResponse {
     [key: string]: unknown;
 }
 
+export interface TurnInterruptParams {
+    threadId: string;
+    turnId: string;
+}
+
+export interface TurnInterruptResponse {
+    ok: boolean;
+    [key: string]: unknown;
+}
+
 export interface ThreadCompactStartParams {
     threadId: string;
 }
@@ -168,31 +194,54 @@ export interface ThreadCompactStartResponse {
     [key: string]: unknown;
 }
 
-export interface ReviewStartParams {
+export type ThreadGoalStatus = 'active' | 'paused' | 'budgetLimited' | 'complete';
+
+export interface ThreadGoal {
     threadId: string;
-    delivery?: 'inline' | 'detached';
-    target:
-        | { type: 'uncommittedChanges' }
-        | { type: 'baseBranch'; branch: string }
-        | { type: 'commit'; sha: string; title?: string }
-        | { type: 'custom'; instructions: string };
+    objective: string;
+    status: ThreadGoalStatus;
+    tokenBudget: number | null;
+    tokensUsed: number;
+    timeUsedSeconds: number;
+    createdAt: number;
+    updatedAt: number;
 }
 
-export interface ReviewStartResponse {
-    turn?: {
-        id?: string;
-        status?: string;
-    };
-    reviewThreadId?: string;
+export interface ThreadGoalSetParams {
+    threadId: string;
+    objective?: string | null;
+    status?: ThreadGoalStatus | null;
+    tokenBudget?: number | null;
+}
+
+export interface ThreadGoalSetResponse {
+    goal: ThreadGoal;
     [key: string]: unknown;
 }
 
-export interface TurnInterruptParams {
+export interface ThreadGoalGetParams {
     threadId: string;
-    turnId: string;
 }
 
-export interface TurnInterruptResponse {
-    ok: boolean;
+export interface ThreadGoalGetResponse {
+    goal: ThreadGoal | null;
+    [key: string]: unknown;
+}
+
+export interface ThreadGoalClearParams {
+    threadId: string;
+}
+
+export interface ThreadGoalClearResponse {
+    cleared: boolean;
+    [key: string]: unknown;
+}
+
+export interface ExperimentalFeatureEnablementSetParams {
+    enablement: Record<string, boolean>;
+}
+
+export interface ExperimentalFeatureEnablementSetResponse {
+    enablement: Record<string, boolean>;
     [key: string]: unknown;
 }

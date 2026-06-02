@@ -10,18 +10,12 @@ import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { getHappyCliCommand } from '@/utils/spawnHappyCLI';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { bootstrapSession } from '@/agent/sessionFactory';
-import { setControlledByUser } from '@/agent/runnerLifecycle';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { getInvokedCwd } from '@/utils/invokedCwd';
-import { codexAcpModeForPermissionMode } from '@/codex/utils/codexAcpMode';
 import { PermissionModeSchema } from '@hapi/protocol/schemas';
 import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
+import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import type { SessionEndReason } from '@hapi/protocol';
-
-type ConfigurableBackend = AgentBackend & {
-    setSessionConfigOption?: (sessionId: string, configId: string, value: string) => Promise<unknown>;
-    getConfigOptionId?: (kind: 'mode' | 'model' | 'reasoning') => string | null;
-};
 
 function emitReadyIfIdle(props: {
     queueSize: () => number;
@@ -38,25 +32,23 @@ function emitReadyIfIdle(props: {
 export async function runAgentSession(opts: {
     agentType: string;
     startedBy?: 'runner' | 'terminal';
-    startingMode?: 'local' | 'remote';
     permissionMode?: SessionPermissionMode;
 }): Promise<void> {
     const workingDirectory = getInvokedCwd();
-    const startedBy = opts.startedBy ?? 'terminal';
-    const startingMode: 'local' | 'remote' = startedBy === 'runner'
-        ? 'remote'
-        : opts.startingMode ?? 'local';
     const initialState: AgentState = {
-        controlledByUser: startingMode === 'local'
+        controlledByUser: false
     };
     const { session, sessionInfo } = await bootstrapSession({
         flavor: opts.agentType,
-        startedBy,
+        startedBy: opts.startedBy ?? 'terminal',
         workingDirectory,
         agentState: initialState
     });
 
-    setControlledByUser(session, startingMode);
+    session.updateAgentState((currentState) => ({
+        ...currentState,
+        controlledByUser: false
+    }));
 
     const messageQueue = new MessageQueue2<Record<string, never>>(() => hashObject({}));
 
@@ -65,15 +57,15 @@ export async function runAgentSession(opts: {
         messageQueue.push(formattedText, {}, localId);
     });
 
+    session.onCancelQueuedMessage((localId) => {
+        const removed = messageQueue.cancelByLocalId(localId);
+        logger.debug(`[agent] cancelByLocalId(${localId}): ${removed ? 'removed' : 'not found (best-effort)'}`);
+        return removed;
+    });
+
     let currentPermissionMode: SessionPermissionMode = opts.permissionMode ?? sessionInfo.permissionMode ?? 'default';
 
     const backend: AgentBackend = AgentRegistry.create(opts.agentType);
-    backend.onSessionCapabilities?.((capabilities) => {
-        session.emitSessionCapabilities(capabilities);
-    });
-    backend.onSlashCommands?.((slashCommands) => {
-        session.emitSessionSlashCommands(slashCommands);
-    });
     await backend.initialize();
 
     const permissionAdapter = new PermissionAdapter(session, backend, () => currentPermissionMode);
@@ -94,40 +86,12 @@ export async function runAgentSession(opts: {
         mcpServers
     });
 
-    const applyRuntimeConfig = async () => {
-        if (opts.agentType !== 'codex') {
-            return;
-        }
-        const configurableBackend = backend as ConfigurableBackend;
-        if (!configurableBackend.setSessionConfigOption) {
-            return;
-        }
-        const acpMode = codexAcpModeForPermissionMode(currentPermissionMode);
-        if (!acpMode) {
-            return;
-        }
-        const modeConfigId = configurableBackend.getConfigOptionId?.('mode');
-        if (!modeConfigId) {
-            logger.debug('[ACP] Codex ACP mode config option not advertised; skipping permission mode sync');
-            return;
-        }
-        try {
-            await configurableBackend.setSessionConfigOption(
-                agentSessionId,
-                modeConfigId,
-                acpMode
-            );
-        } catch (error) {
-            logger.debug('[ACP] Failed to apply Codex ACP permission mode', error);
-        }
-    };
-
     let thinking = false;
     let shouldExit = false;
     let waitAbortController: AbortController | null = null;
 
     const syncKeepAlive = () => {
-        session.keepAlive(thinking, startingMode, {
+        session.keepAlive(thinking, 'remote', {
             permissionMode: currentPermissionMode
         });
     };
@@ -140,7 +104,7 @@ export async function runAgentSession(opts: {
         return parsed.data as SessionPermissionMode;
     };
 
-    session.rpcHandlerManager.registerHandler('set-session-config', async (payload: unknown) => {
+    session.rpcHandlerManager.registerHandler(RPC_METHODS.SetSessionConfig, async (payload: unknown) => {
         if (!payload || typeof payload !== 'object') {
             throw new Error('Invalid session config payload');
         }
@@ -150,12 +114,10 @@ export async function runAgentSession(opts: {
             currentPermissionMode = resolvePermissionMode(config.permissionMode);
         }
 
-        await applyRuntimeConfig();
         syncKeepAlive();
         return { applied: { permissionMode: currentPermissionMode } };
     });
 
-    await applyRuntimeConfig();
     syncKeepAlive();
     const keepAliveInterval = setInterval(() => {
         syncKeepAlive();
@@ -177,7 +139,7 @@ export async function runAgentSession(opts: {
         }
     };
 
-    session.rpcHandlerManager.registerHandler('abort', async () => {
+    session.rpcHandlerManager.registerHandler(RPC_METHODS.Abort, async () => {
         await handleAbort();
     });
 

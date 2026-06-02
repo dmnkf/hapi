@@ -1,6 +1,4 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup } from '@testing-library/react'
-import { afterEach } from 'vitest'
 
 function installMemoryLocalStorage(): void {
     const store = new Map<string, string>()
@@ -29,12 +27,10 @@ function installMemoryLocalStorage(): void {
         value: memoryLocalStorage,
         configurable: true
     })
-    if (typeof window !== 'undefined') {
-        Object.defineProperty(window, 'localStorage', {
-            value: memoryLocalStorage,
-            configurable: true
-        })
-    }
+    Object.defineProperty(window, 'localStorage', {
+        value: memoryLocalStorage,
+        configurable: true
+    })
 }
 
 try {
@@ -51,6 +47,41 @@ try {
     installMemoryLocalStorage()
 }
 
-afterEach(() => {
-    cleanup()
-})
+if (!('IntersectionObserver' in globalThis)) {
+    class MockIntersectionObserver implements IntersectionObserver {
+        readonly root = null
+        readonly rootMargin = ''
+        readonly thresholds = []
+
+        disconnect() {}
+        observe() {}
+        takeRecords(): IntersectionObserverEntry[] { return [] }
+        unobserve() {}
+    }
+
+    Object.defineProperty(globalThis, 'IntersectionObserver', {
+        value: MockIntersectionObserver,
+        configurable: true
+    })
+    Object.defineProperty(window, 'IntersectionObserver', {
+        value: MockIntersectionObserver,
+        configurable: true
+    })
+}
+
+if (typeof window.matchMedia !== 'function') {
+    Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        configurable: true,
+        value: (query: string) => ({
+            matches: false,
+            media: query,
+            onchange: null,
+            addListener() {},
+            removeListener() {},
+            addEventListener() {},
+            removeEventListener() {},
+            dispatchEvent() { return false },
+        }),
+    })
+}

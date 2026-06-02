@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { CLAUDE_EFFORT_OPTIONS, MODEL_OPTIONS } from './types'
 
 describe('Claude model options', () => {
-    it('includes 1m model options in the expected order', () => {
+    it('derives options from shared Claude model presets', () => {
         expect(MODEL_OPTIONS.claude).toEqual([
             { value: 'auto', label: 'Default' },
-            { value: 'opus', label: 'Opus (opus)' },
-            { value: 'opus[1m]', label: 'Opus 1M (opus[1m])' },
-            { value: 'sonnet', label: 'Sonnet (sonnet)' },
-            { value: 'sonnet[1m]', label: 'Sonnet 1M (sonnet[1m])' },
+            ...CLAUDE_MODEL_PRESETS.map((model) => ({
+                value: model,
+                label: getClaudeModelLabel(model) ?? model
+            }))
         ])
     })
 
@@ -24,8 +24,10 @@ describe('Claude effort options', () => {
     it('matches supported effort presets in expected order', () => {
         expect(CLAUDE_EFFORT_OPTIONS).toEqual([
             { value: 'auto', label: 'Auto' },
+            { value: 'low', label: 'Low' },
             { value: 'medium', label: 'Medium' },
             { value: 'high', label: 'High' },
+            { value: 'xhigh', label: 'XHigh' },
             { value: 'max', label: 'Max' },
         ])
     })

@@ -3,7 +3,7 @@ import { Server, type DefaultEventsMap } from 'socket.io'
 import { jwtVerify } from 'jose'
 import { z } from 'zod'
 import type { Store } from '../store'
-import { configuration } from '../configuration'
+import { getConfiguration } from '../configuration'
 import { constantTimeEquals } from '../utils/crypto'
 import { parseAccessToken } from '../utils/accessToken'
 import { registerCliHandlers } from './handlers/cli'
@@ -38,11 +38,11 @@ export type SocketServerDeps = {
     onWebappEvent?: (event: SyncEvent) => void
     onSessionAlive?: (payload: { sid: string; time: number; thinking?: boolean; mode?: 'local' | 'remote' }) => void
     onSessionEnd?: (payload: { sid: string; time: number }) => void
-    onSessionCapabilities?: (sessionId: string, capabilities: import('@hapi/protocol').SessionCapabilities) => void
-    onSessionSlashCommands?: (sessionId: string, slashCommands: import('@hapi/protocol').SessionRuntimeSlashCommands) => void
     onMachineAlive?: (payload: { machineId: string; time: number }) => void
     onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
     onSessionActivity?: (sessionId: string, updatedAt: number) => void
+    onSweepImmediateQueued?: (sessionId: string, now: number) => void
+    onMessagesConsumed?: (sessionId: string) => void
 }
 
 export function createSocketServer(deps: SocketServerDeps): {
@@ -50,6 +50,7 @@ export function createSocketServer(deps: SocketServerDeps): {
     engine: Engine
     rpcRegistry: RpcRegistry
 } {
+    const configuration = getConfiguration()
     const corsOrigins = deps.corsOrigins ?? configuration.corsOrigins
     const allowAllOrigins = corsOrigins.includes('*')
     const corsOriginOption = allowAllOrigins ? '*' : corsOrigins
@@ -116,12 +117,12 @@ export function createSocketServer(deps: SocketServerDeps): {
         terminalRegistry,
         onSessionAlive: deps.onSessionAlive,
         onSessionEnd: deps.onSessionEnd,
-        onSessionCapabilities: deps.onSessionCapabilities,
-        onSessionSlashCommands: deps.onSessionSlashCommands,
         onMachineAlive: deps.onMachineAlive,
         onWebappEvent: deps.onWebappEvent,
         onBackgroundTaskDelta: deps.onBackgroundTaskDelta,
-        onSessionActivity: deps.onSessionActivity
+        onSessionActivity: deps.onSessionActivity,
+        onSweepImmediateQueued: deps.onSweepImmediateQueued,
+        onMessagesConsumed: deps.onMessagesConsumed
     }))
 
     terminalNs.use(async (socket, next) => {

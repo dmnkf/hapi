@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { mkdir, rm, symlink, writeFile } from 'fs/promises'
-import { join, dirname } from 'path'
+import { join } from 'path'
 import { tmpdir } from 'os'
 import { RpcHandlerManager } from '../../../api/rpc/RpcHandlerManager'
 import { registerDirectoryHandlers } from './directories'
@@ -42,34 +42,6 @@ describe('directory RPC handlers', () => {
         const names = (parsed.entries ?? []).map((entry) => entry.name)
         expect(names).toContain('src')
         expect(names).toContain('README.md')
-    })
-
-    it('rejects absolute paths outside the session working directory by default', async () => {
-        const outsideDir = dirname(rootDir)
-        const response = await rpc.handleRequest({
-            method: 'session-test:listDirectory',
-            params: JSON.stringify({ path: outsideDir })
-        })
-
-        const parsed = JSON.parse(response) as { success: boolean; error?: string }
-        expect(parsed.success).toBe(false)
-        expect(parsed.error).toContain('outside the working directory')
-    })
-
-    it('lists absolute paths when absolute access is enabled', async () => {
-        const machineRpc = new RpcHandlerManager({ scopePrefix: 'machine-test' })
-        registerDirectoryHandlers(machineRpc, rootDir, { allowAbsoluteAccess: true })
-
-        const outsideDir = dirname(rootDir)
-        const response = await machineRpc.handleRequest({
-            method: 'machine-test:listDirectory',
-            params: JSON.stringify({ path: outsideDir })
-        })
-
-        const parsed = JSON.parse(response) as { success: boolean; entries?: Array<{ name: string; type: string }> }
-        expect(parsed.success).toBe(true)
-        const names = (parsed.entries ?? []).map((entry) => entry.name)
-        expect(names).toContain(rootDir.split('/').pop() ?? '')
     })
 
     it('skips symlink stat in listDirectory', async () => {

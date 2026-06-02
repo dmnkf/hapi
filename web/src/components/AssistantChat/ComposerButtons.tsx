@@ -1,7 +1,10 @@
 import { ComposerPrimitive } from '@assistant-ui/react'
-import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { ConversationStatus } from '@/realtime/types'
 import { useTranslation } from '@/lib/use-translation'
+import { ScheduleIcon } from '@/components/icons'
+import { ScheduleTimePicker } from './ScheduleTimePicker'
+import type { PendingSchedule } from './ScheduleTimePicker'
+import { useRef, useState } from 'react'
 
 function VoiceAssistantIcon() {
     return (
@@ -126,24 +129,6 @@ function TerminalIcon() {
     )
 }
 
-function SlashCommandIcon() {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <line x1="7" y1="4" x2="17" y2="20" />
-        </svg>
-    )
-}
-
 function AttachmentIcon() {
     return (
         <svg
@@ -190,23 +175,6 @@ function AbortIcon(props: { spinning: boolean }) {
             fill="currentColor"
         >
             <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4-2.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5h-4a.5.5 0 0 1-.5-.5v-4Z" />
-        </svg>
-    )
-}
-
-function MoreIcon() {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            aria-hidden="true"
-        >
-            <circle cx="5" cy="12" r="1.7" />
-            <circle cx="12" cy="12" r="1.7" />
-            <circle cx="19" cy="12" r="1.7" />
         </svg>
     )
 }
@@ -337,8 +305,6 @@ export function ComposerButtons(props: {
     controlsDisabled: boolean
     showSettingsButton: boolean
     onSettingsToggle: () => void
-    showSlashCommandButton?: boolean
-    onSlashCommand?: () => void
     showTerminalButton: boolean
     terminalDisabled: boolean
     terminalLabel: string
@@ -357,72 +323,22 @@ export function ComposerButtons(props: {
     onVoiceToggle: () => void
     onVoiceMicToggle?: () => void
     onSend: () => void
+    pendingSchedule?: PendingSchedule | null
+    onSchedule?: (pending: PendingSchedule) => void
+    onClearSchedule?: () => void
+    // The backend rejects scheduled-send + attachment combinations (the per-CLI
+    // upload directory is torn down before a mature emit could read the files).
+    // The composer must surface that constraint at UI time so the user never
+    // builds a submission the hub will reject — see hub/web/routes/messages.ts.
+    hasAttachments?: boolean
 }) {
     const { t } = useTranslation()
     const isVoiceConnected = props.voiceStatus === 'connected'
-    const [overflowOpen, setOverflowOpen] = useState(false)
-    const overflowContainerRef = useRef<HTMLDivElement>(null)
+    const [showSchedulePicker, setShowSchedulePicker] = useState(false)
+    const scheduleButtonRef = useRef<HTMLButtonElement>(null)
 
-    // Close the overflow popover when clicking/tapping outside.
-    useEffect(() => {
-        if (!overflowOpen) return
-        const onDocPointer = (event: Event) => {
-            if (!overflowContainerRef.current) return
-            if (!(event.target instanceof Node)) return
-            if (!overflowContainerRef.current.contains(event.target)) {
-                setOverflowOpen(false)
-            }
-        }
-        document.addEventListener('pointerdown', onDocPointer, true)
-        return () => document.removeEventListener('pointerdown', onDocPointer, true)
-    }, [overflowOpen])
-
-    const overflowItems: Array<{ key: string; label: string; icon: ReactElement; onClick: () => void; disabled?: boolean; tone?: 'default' | 'switch' | 'terminal' }> = []
-    if (props.showSlashCommandButton && props.onSlashCommand) {
-        overflowItems.push({
-            key: 'slash',
-            label: t('composer.slashCommands'),
-            icon: <SlashCommandIcon />,
-            onClick: props.onSlashCommand,
-            disabled: props.controlsDisabled,
-        })
-    }
-    if (props.showSettingsButton) {
-        overflowItems.push({
-            key: 'settings',
-            label: t('composer.settings'),
-            icon: <SettingsIcon />,
-            onClick: props.onSettingsToggle,
-            disabled: props.controlsDisabled,
-        })
-    }
-    if (props.showTerminalButton) {
-        overflowItems.push({
-            key: 'terminal',
-            label: props.terminalLabel,
-            icon: <TerminalIcon />,
-            onClick: props.onTerminal,
-            disabled: props.terminalDisabled,
-            tone: 'terminal',
-        })
-    }
-    if (props.showSwitchButton) {
-        overflowItems.push({
-            key: 'switch',
-            label: t('composer.switchRemote'),
-            icon: <SwitchToRemoteIcon />,
-            onClick: props.onSwitch,
-            disabled: props.switchDisabled,
-            tone: 'switch',
-        })
-    }
-
-    const toneClass = (tone?: 'default' | 'switch' | 'terminal') =>
-        tone === 'terminal'
-            ? 'hover:text-emerald-500'
-            : tone === 'switch'
-                ? 'hover:text-blue-500'
-                : 'hover:text-[var(--app-fg)]'
+    const hasSchedule = props.pendingSchedule != null
+    const hasAttachments = props.hasAttachments ?? false
 
     return (
         <div className="flex items-center justify-between px-2 pb-2">
@@ -430,11 +346,37 @@ export function ComposerButtons(props: {
                 <ComposerPrimitive.AddAttachment
                     aria-label={t('composer.attach')}
                     title={t('composer.attach')}
-                    disabled={props.controlsDisabled}
+                    disabled={props.controlsDisabled || hasSchedule}
                     className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     <AttachmentIcon />
                 </ComposerPrimitive.AddAttachment>
+
+                {props.showSettingsButton ? (
+                    <button
+                        type="button"
+                        aria-label={t('composer.settings')}
+                        title={t('composer.settings')}
+                        className="settings-button flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]"
+                        onClick={props.onSettingsToggle}
+                        disabled={props.controlsDisabled}
+                    >
+                        <SettingsIcon />
+                    </button>
+                ) : null}
+
+                {props.showTerminalButton ? (
+                    <button
+                        type="button"
+                        aria-label={props.terminalLabel}
+                        title={props.terminalLabel}
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={props.onTerminal}
+                        disabled={props.terminalDisabled}
+                    >
+                        <TerminalIcon />
+                    </button>
+                ) : null}
 
                 {props.showAbortButton ? (
                     <button
@@ -446,6 +388,19 @@ export function ComposerButtons(props: {
                         onClick={props.onAbort}
                     >
                         <AbortIcon spinning={props.isAborting} />
+                    </button>
+                ) : null}
+
+                {props.showSwitchButton ? (
+                    <button
+                        type="button"
+                        aria-label={t('composer.switchRemote')}
+                        title={t('composer.switchRemote')}
+                        disabled={props.switchDisabled}
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={props.onSwitch}
+                    >
+                        <SwitchToRemoteIcon />
                     </button>
                 ) : null}
 
@@ -465,46 +420,42 @@ export function ComposerButtons(props: {
                     </button>
                 ) : null}
 
-                {overflowItems.length > 0 ? (
-                    <div ref={overflowContainerRef} className="relative">
+                {/* Schedule button — only shown when onSchedule handler is provided */}
+                {props.onSchedule ? (
+                    <>
                         <button
+                            ref={scheduleButtonRef}
                             type="button"
-                            aria-label={t('composer.more')}
-                            title={t('composer.more')}
-                            aria-haspopup="menu"
-                            aria-expanded={overflowOpen}
-                            onClick={() => setOverflowOpen((prev) => !prev)}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]"
+                            aria-label={t('composer.scheduleSend')}
+                            title={t('composer.scheduleSend')}
+                            disabled={props.controlsDisabled || hasAttachments}
+                            onClick={() => {
+                                if (hasSchedule && props.onClearSchedule) {
+                                    props.onClearSchedule()
+                                } else {
+                                    setShowSchedulePicker((v) => !v)
+                                }
+                            }}
+                            className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                                hasSchedule
+                                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                                    : 'text-[var(--app-fg)]/60 hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
+                            }`}
                         >
-                            <MoreIcon />
+                            <ScheduleIcon className="h-[18px] w-[18px]" />
                         </button>
-
-                        {overflowOpen ? (
-                            <div
-                                role="menu"
-                                className="absolute bottom-full left-0 z-30 mb-2 min-w-[180px] rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] p-1 shadow-lg"
-                            >
-                                {overflowItems.map((item) => (
-                                    <button
-                                        key={item.key}
-                                        type="button"
-                                        role="menuitem"
-                                        disabled={item.disabled}
-                                        onClick={() => {
-                                            setOverflowOpen(false)
-                                            if (!item.disabled) item.onClick()
-                                        }}
-                                        className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-[var(--app-fg)] transition-colors hover:bg-[var(--app-secondary-bg)] ${toneClass(item.tone)} disabled:cursor-not-allowed disabled:opacity-50`}
-                                    >
-                                        <span className="flex h-5 w-5 items-center justify-center text-[var(--app-fg)]/70">
-                                            {item.icon}
-                                        </span>
-                                        <span className="truncate">{item.label}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        ) : null}
-                    </div>
+                        {showSchedulePicker && (
+                            <ScheduleTimePicker
+                                anchorRef={scheduleButtonRef}
+                                onSchedule={(pending) => {
+                                    props.onSchedule!(pending)
+                                    setShowSchedulePicker(false)
+                                }}
+                                onClose={() => setShowSchedulePicker(false)}
+                                pendingSchedule={props.pendingSchedule}
+                            />
+                        )}
+                    </>
                 ) : null}
             </div>
 

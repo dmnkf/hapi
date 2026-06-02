@@ -5,17 +5,26 @@ export type {
     AttachmentMetadata,
     DecryptedMessage,
     Metadata,
+    Machine,
+    MachineMetadata,
+    MachinePatch,
+    MachineUpdatedData,
+    RunnerState,
     Session,
+    SessionPatch,
+    SessionUpdatedData,
     SyncEvent,
     TeamMember,
     TeamMessage,
     TeamState,
     TeamTask,
+    ThreadGoal,
+    ThreadGoalStatus,
     TodoItem,
     WorktreeMetadata
 } from './schemas'
 
-export type { SessionSummary, SessionSummaryMetadata } from './sessionSummary'
+export type { SessionSummary, SessionSummaryMetadata, PendingRequestKind } from './sessionSummary'
 export { AGENT_MESSAGE_PAYLOAD_TYPE } from './modes'
 
 export type {
@@ -26,6 +35,7 @@ export type {
     CodexPermissionMode,
     CursorPermissionMode,
     GeminiPermissionMode,
+    KimiPermissionMode,
     OpencodePermissionMode,
     PermissionMode,
     PermissionModeOption,
@@ -33,10 +43,3 @@ export type {
 } from './modes'
 
 export type { ClaudeModelPreset, GeminiModelPreset } from './models'
-
-export type {
-    ModelCapability,
-    RuntimeSlashCommand,
-    SessionCapabilities,
-    SessionRuntimeSlashCommands
-} from './capabilities'

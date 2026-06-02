@@ -1,23 +1,12 @@
+import type { CodexModelsResponse, CodexModelSummary } from '@hapi/protocol/apiTypes';
 import { CodexAppServerClient } from '@/codex/codexAppServerClient';
 import { getErrorMessage } from './rpcResponses';
-
-export interface CodexModelSummary {
-    id: string;
-    displayName: string;
-    isDefault: boolean;
-    defaultReasoningEffort?: string | null;
-    supportedReasoningEfforts?: string[];
-}
 
 export interface ListCodexModelsRequest {
     includeHidden?: boolean;
 }
 
-export interface ListCodexModelsResponse {
-    success: boolean;
-    models?: CodexModelSummary[];
-    error?: string;
-}
+export type ListCodexModelsResponse = CodexModelsResponse;
 
 function asNonEmptyString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;

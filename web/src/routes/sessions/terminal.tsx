@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent } from 'react'
 import { useParams } from '@tanstack/react-router'
 import type { Terminal } from '@xterm/xterm'
@@ -187,8 +187,7 @@ export default function TerminalPage() {
     const goBack = useAppGoBack()
     const { session } = useSession(api, sessionId)
     const terminalSupported = isRemoteTerminalSupported(session?.metadata)
-    const generateTerminalId = useCallback(() => randomId(), [])
-    const [terminalId, setTerminalId] = useState(generateTerminalId)
+    const terminalId = useMemo(() => randomId(), [sessionId])
     const terminalRef = useRef<Terminal | null>(null)
     const inputDisposableRef = useRef<{ dispose: () => void } | null>(null)
     const connectOnceRef = useRef(false)
@@ -293,9 +292,8 @@ export default function TerminalPage() {
     useEffect(() => {
         connectOnceRef.current = false
         setExitInfo(null)
-        setTerminalId(generateTerminalId())
         disconnect()
-    }, [sessionId, disconnect, generateTerminalId])
+    }, [sessionId, disconnect])
 
     useEffect(() => {
         return () => {
@@ -317,24 +315,6 @@ export default function TerminalPage() {
             setExitInfo(null)
         }
     }, [terminalState.status])
-
-    const handleReconnect = useCallback(() => {
-        const size = lastSizeRef.current
-        if (!size || !session?.active || !terminalSupported) {
-            return
-        }
-        disconnect()
-        connectOnceRef.current = false
-        setExitInfo(null)
-        // Generate a fresh terminalId to avoid collisions with stale
-        // registry entries that may not have been cleaned up yet.
-        setTerminalId(generateTerminalId())
-        // Small delay to let the socket fully tear down
-        setTimeout(() => {
-            connectOnceRef.current = true
-            connect(size.cols, size.rows)
-        }, 200)
-    }, [session?.active, terminalSupported, disconnect, connect, generateTerminalId])
 
     const quickInputDisabled = !session?.active || terminalState.status !== 'connected'
     const writePlainInput = useCallback((text: string) => {
@@ -418,7 +398,6 @@ export default function TerminalPage() {
 
     const subtitle = session.metadata?.path ?? sessionId
     const status = terminalState.status
-    const canReconnect = session.active && terminalSupported && (status === 'error' || status === 'idle' || exitInfo !== null)
     const errorMessage = !terminalSupported
         ? t('terminal.unsupportedWindows')
         : terminalState.status === 'error'
@@ -455,16 +434,7 @@ export default function TerminalPage() {
             {errorMessage ? (
                 <div className="mx-auto w-full max-w-content px-3 pt-3">
                     <div className="rounded-md border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] p-3 text-xs text-[var(--app-badge-error-text)]">
-                        <div>{errorMessage}</div>
-                        {canReconnect ? (
-                            <button
-                                type="button"
-                                onClick={handleReconnect}
-                                className="mt-2 rounded-md bg-[var(--app-button)] px-3 py-1.5 text-xs font-medium text-[var(--app-button-text)] transition-colors hover:opacity-90"
-                            >
-                                Reconnect
-                            </button>
-                        ) : null}
+                        {errorMessage}
                     </div>
                 </div>
             ) : null}
@@ -472,19 +442,8 @@ export default function TerminalPage() {
             {exitInfo ? (
                 <div className="mx-auto w-full max-w-content px-3 pt-3">
                     <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-3 text-xs text-[var(--app-hint)]">
-                        <div>
-                            Terminal exited{exitInfo.code !== null ? ` with code ${exitInfo.code}` : ''}
-                            {exitInfo.signal ? ` (${exitInfo.signal})` : ''}.
-                        </div>
-                        {canReconnect ? (
-                            <button
-                                type="button"
-                                onClick={handleReconnect}
-                                className="mt-2 rounded-md bg-[var(--app-button)] px-3 py-1.5 text-xs font-medium text-[var(--app-button-text)] transition-colors hover:opacity-90"
-                            >
-                                Reconnect
-                            </button>
-                        ) : null}
+                        Terminal exited{exitInfo.code !== null ? ` with code ${exitInfo.code}` : ''}
+                        {exitInfo.signal ? ` (${exitInfo.signal})` : ''}.
                     </div>
                 </div>
             ) : null}

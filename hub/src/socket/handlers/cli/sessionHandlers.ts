@@ -1,13 +1,8 @@
 import type { ClientToServerEvents } from '@hapi/protocol'
-import {
-    SessionCapabilitiesPayloadSchema,
-    SessionSlashCommandsPayloadSchema,
-    type SessionCapabilities,
-    type SessionRuntimeSlashCommands
-} from '@hapi/protocol'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import type { CodexCollaborationMode, PermissionMode } from '@hapi/protocol/types'
+import { isRedundantGoalStatusEventContent } from '@hapi/protocol/messages'
 import type { Store, StoredSession } from '../../../store'
 import type { SyncEvent } from '../../../sync/syncEngine'
 import { extractTodoWriteTodosFromMessageContent } from '../../../sync/todos'
@@ -67,15 +62,18 @@ export type SessionHandlersDeps = {
     emitAccessError: EmitAccessError
     onSessionAlive?: (payload: SessionAlivePayload) => void
     onSessionEnd?: (payload: SessionEndPayload) => void
-    onSessionCapabilities?: (sessionId: string, capabilities: SessionCapabilities) => void
-    onSessionSlashCommands?: (sessionId: string, slashCommands: SessionRuntimeSlashCommands) => void
     onWebappEvent?: (event: SyncEvent) => void
     onBackgroundTaskDelta?: (sessionId: string, delta: { started: number; completed: number }) => void
     onSessionActivity?: (sessionId: string, updatedAt: number) => void
+    /** Delegates session-end immediate-queue sweep to the MessageService layer. */
+    onSweepImmediateQueued?: (sessionId: string, now: number) => void
+    /** Drops the queued-thinking grace so synchronous CLI handlers (e.g. slash
+     *  commands) don't leave the spinner stuck for the full grace window. */
+    onMessagesConsumed?: (sessionId: string) => void
 }
 
 export function registerSessionHandlers(socket: CliSocketWithData, deps: SessionHandlersDeps): void {
-    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionEnd, onSessionCapabilities, onSessionSlashCommands, onWebappEvent, onBackgroundTaskDelta, onSessionActivity } = deps
+    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionEnd, onWebappEvent, onBackgroundTaskDelta, onSessionActivity, onSweepImmediateQueued, onMessagesConsumed } = deps
 
     socket.on('message', (data: unknown) => {
         const parsed = messageSchema.safeParse(data)
@@ -103,6 +101,10 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         }
         const session = sessionAccess.value
 
+        if (isRedundantGoalStatusEventContent(content)) {
+            return
+        }
+
         const msg = store.messages.addMessage(sid, content, localId)
         if (shouldRecordSessionActivity(content)) {
             onSessionActivity?.(sid, msg.createdAt)
@@ -112,7 +114,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         if (todos) {
             const updated = store.sessions.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
             if (updated) {
-                onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+                onWebappEvent?.({ type: 'session-updated', sessionId: sid })
             }
         }
 
@@ -123,7 +125,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             const newTeamState = applyTeamStateDelta(existingTeamState ?? null, teamDelta)
             const updated = store.sessions.setSessionTeamState(sid, newTeamState, msg.createdAt, session.namespace)
             if (updated) {
-                onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+                onWebappEvent?.({ type: 'session-updated', sessionId: sid })
             }
         }
 
@@ -158,7 +160,8 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
                 seq: msg.seq,
                 localId: msg.localId,
                 content: msg.content,
-                createdAt: msg.createdAt
+                createdAt: msg.createdAt,
+                invokedAt: msg.invokedAt
             }
         })
     })
@@ -204,7 +207,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
                 }
             }
             socket.to(`session:${sid}`).emit('update', update)
-            onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+            onWebappEvent?.({ type: 'session-updated', sessionId: sid })
         }
     }
 
@@ -251,7 +254,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
                 }
             }
             socket.to(`session:${sid}`).emit('update', update)
-            onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+            onWebappEvent?.({ type: 'session-updated', sessionId: sid })
         }
     }
 
@@ -269,7 +272,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         onSessionAlive?.(data)
     })
 
-    socket.on('messages-consumed', (data: { sid: string; localIds: string[] }) => {
+    socket.on('messages-consumed', (data: { sid: string; localIds: string[]; clearQueuedThinkingGrace?: boolean }) => {
         if (!data || typeof data.sid !== 'string' || !Array.isArray(data.localIds)) {
             return
         }
@@ -282,7 +285,26 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
-        onWebappEvent?.({ type: 'messages-consumed', sessionId: data.sid, localIds })
+        const invokedAt = Date.now()
+        try {
+            store.messages.markMessagesInvoked(data.sid, localIds, invokedAt)
+            onSessionActivity?.(data.sid, invokedAt)
+            // Only drop the queued-thinking grace when the CLI explicitly opts in
+            // (synchronous handlers like slash commands that will never send
+            // their own `thinking=true` keepalive). Normal queue drains still
+            // need the grace so the spinner doesn't flicker between the queue
+            // shift and `backend.prompt` start.
+            if (data.clearQueuedThinkingGrace === true) {
+                onMessagesConsumed?.(data.sid)
+            }
+            // Emit only after the DB write succeeds. Otherwise a transient SQLite
+            // failure would broadcast an `invokedAt` that was never persisted —
+            // live clients would hide the queued rows while a refresh / secondary
+            // client would see them as queued again, diverging the state.
+            onWebappEvent?.({ type: 'messages-consumed', sessionId: data.sid, localIds, invokedAt })
+        } catch (err) {
+            console.error('markMessagesInvoked failed', err)
+        }
     })
 
     socket.on('session-end', (data: SessionEndPayload) => {
@@ -294,32 +316,25 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+
+        // Force-invoke only immediate-queued messages (scheduled_at IS NULL) at
+        // session end.  *All* scheduled rows — mature or future — are deliberately
+        // preserved in DB so the mature-scan path (releaseMatureScheduledMessages)
+        // remains the sole emit channel and the CLI ack remains the sole writer of
+        // invoked_at.  See HAPI Bot R4: stamping a mature scheduled row here would
+        // make the next mature-scan tick skip it (filter on invoked_at IS NULL) and
+        // silently drop the user's prompt.
+        //
+        // Without this sweep for immediate rows, the floating bar would pin queued
+        // rows after the CLI exits — there is no longer an ack path, so they would
+        // stay queued forever.  The 5-second tick in syncEngine.expireInactive
+        // emits scheduled rows when they mature, regardless of session end.
+        try {
+            onSweepImmediateQueued?.(data.sid, Date.now())
+        } catch (err) {
+            console.error('session-end sweep failed', err)
+        }
+
         onSessionEnd?.(data)
-    })
-
-    socket.on('session-capabilities', (data: unknown) => {
-        const parsed = SessionCapabilitiesPayloadSchema.safeParse(data)
-        if (!parsed.success) {
-            return
-        }
-        const sessionAccess = resolveSessionAccess(parsed.data.sid)
-        if (!sessionAccess.ok) {
-            emitAccessError('session', parsed.data.sid, sessionAccess.reason)
-            return
-        }
-        onSessionCapabilities?.(parsed.data.sid, parsed.data.capabilities)
-    })
-
-    socket.on('session-slash-commands', (data: unknown) => {
-        const parsed = SessionSlashCommandsPayloadSchema.safeParse(data)
-        if (!parsed.success) {
-            return
-        }
-        const sessionAccess = resolveSessionAccess(parsed.data.sid)
-        if (!sessionAccess.ok) {
-            emitAccessError('session', parsed.data.sid, sessionAccess.reason)
-            return
-        }
-        onSessionSlashCommands?.(parsed.data.sid, parsed.data.slashCommands)
     })
 }
