@@ -74,6 +74,7 @@ function createSession(): Session {
         model: null,
         modelReasoningEffort: null,
         effort: null,
+        serviceTier: null,
         permissionMode: undefined,
         collaborationMode: undefined
     }
@@ -132,6 +133,7 @@ describe('bootstrapExistingSession', () => {
             geminiSessionId: 'gemini-thread-1',
             opencodeSessionId: 'opencode-thread-1',
             cursorSessionId: 'cursor-thread-1',
+            cursorSessionProtocol: 'acp',
             summary: {
                 text: 'resume me',
                 updatedAt: 100
@@ -159,6 +161,7 @@ describe('bootstrapExistingSession', () => {
             geminiSessionId: 'gemini-thread-1',
             opencodeSessionId: 'opencode-thread-1',
             cursorSessionId: 'cursor-thread-1',
+            cursorSessionProtocol: 'acp',
             summary: {
                 text: 'resume me',
                 updatedAt: 100

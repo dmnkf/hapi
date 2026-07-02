@@ -28,6 +28,9 @@ export type {
     OpencodeModelsResponse,
     OpencodeModelSummary,
     PathExistsResponse,
+    PiModelSummary,
+    PiModelsResponse,
+    PiThinkingLevelMap,
     SlashCommand,
     SlashCommandsResponse,
     SessionResponse,
@@ -40,8 +43,12 @@ export type {
     AgentState,
     AttachmentMetadata,
     CodexCollaborationMode,
+    Metadata,
     PermissionMode,
     Machine,
+    MachineHealth,
+    PendingRequest,
+    PendingRequestKind,
     RunnerState,
     Session,
     SessionPatch,
@@ -56,6 +63,8 @@ export type {
     TodoItem,
     WorktreeMetadata
 } from '@hapi/protocol/types'
+
+export type { HapiSessionExport } from '@hapi/protocol/sessionExport'
 
 export type SessionMetadataSummary = {
     path: string
@@ -140,6 +149,71 @@ export type PushUnsubscribePayload = {
 
 export type PushVapidPublicKeyResponse = {
     publicKey: string
+}
+
+export type CodexDesktopScriptResponse = {
+    success: boolean
+    message?: string
+    pid?: number
+    command?: string
+    script?: string
+    cwd?: string
+    output?: string
+    error?: string
+    codexDesktopRunning?: boolean
+    codexClientAvailable?: boolean
+    syncedCount?: number
+    sessionIds?: string[]
+}
+
+export type CodexLocalSessionSummary = {
+    id: string
+    title: string
+    lastUserMessage?: string | null
+    cwd?: string | null
+    file: string
+    modifiedAt: number
+    originator?: string | null
+    cliVersion?: string | null
+}
+
+export type CodexLocalSessionsResponse = {
+    success: true
+    sessions: CodexLocalSessionSummary[]
+}
+
+export type CodexDesktopSyncRequest = {
+    sessionIds: string[]
+}
+
+export type CodexDesktopStatusResponse = {
+    success: true
+    codexDesktopRunning: boolean
+    codexClientAvailable: boolean
+}
+
+export type CodexDuplicateSessionGroup = {
+    codexSessionId: string
+    hapiSessionIds: string[]
+    canonicalSessionId?: string
+    removedSessionIds?: string[]
+}
+
+export type CodexDuplicateSessionsResponse = {
+    success: true
+    duplicates: CodexDuplicateSessionGroup[]
+} | {
+    success: false
+    error: string
+}
+
+export type CodexMergeDuplicateSessionsResponse = {
+    success: true
+    merged: CodexDuplicateSessionGroup[]
+    mergedCount: number
+} | {
+    success: false
+    error: string
 }
 
 export type VisibilityPayload = {

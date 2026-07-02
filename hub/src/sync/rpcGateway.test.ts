@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import type { Server } from 'socket.io'
 import type { RpcRegistry } from '../socket/rpcRegistry'
-import { RpcGateway } from './rpcGateway'
+import { RpcGateway, RpcTargetMissingError } from './rpcGateway'
 
 function createGateway() {
     const timeouts: number[] = []
@@ -59,6 +59,59 @@ describe('RpcGateway RPC timeouts', () => {
         await gateway.listCodexModelsForMachine('machine-1')
 
         expect(timeouts).toEqual([120_000])
+    })
+
+    it('uses an extended RPC timeout when listing Cursor models for a machine', async () => {
+        const { gateway, timeouts } = createGateway()
+
+        await gateway.listCursorModelsForMachine('machine-1')
+
+        expect(timeouts).toEqual([120_000])
+    })
+})
+
+// tiann/hapi#916: rpcCall throws a typed `RpcTargetMissingError` when the
+// target CLI is unreachable, so syncEngine.archiveSession can narrow on it
+// and treat the kill as a benign no-op.
+describe('RpcGateway no-target diagnostics (tiann/hapi#916)', () => {
+    it('throws RpcTargetMissingError(handler-not-registered) when no socket is registered for the method', async () => {
+        const io = {
+            of() {
+                return {
+                    sockets: {
+                        get() { return undefined }
+                    }
+                }
+            }
+        } as unknown as Server
+        const rpcRegistry = {
+            getSocketIdForMethod() { return undefined }
+        } as unknown as RpcRegistry
+        const gateway = new RpcGateway(io, rpcRegistry)
+
+        const error = await gateway.killSession('session-1').catch((e: unknown) => e)
+        expect(error).toBeInstanceOf(RpcTargetMissingError)
+        expect((error as RpcTargetMissingError).code).toBe('handler-not-registered')
+    })
+
+    it('throws RpcTargetMissingError(socket-disconnected) when the socket id is registered but no socket exists', async () => {
+        const io = {
+            of() {
+                return {
+                    sockets: {
+                        get() { return undefined }
+                    }
+                }
+            }
+        } as unknown as Server
+        const rpcRegistry = {
+            getSocketIdForMethod() { return 'socket-1' }
+        } as unknown as RpcRegistry
+        const gateway = new RpcGateway(io, rpcRegistry)
+
+        const error = await gateway.killSession('session-1').catch((e: unknown) => e)
+        expect(error).toBeInstanceOf(RpcTargetMissingError)
+        expect((error as RpcTargetMissingError).code).toBe('socket-disconnected')
     })
 })
 

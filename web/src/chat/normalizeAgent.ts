@@ -577,6 +577,21 @@ export function normalizeAgentRecord(
             }
         }
 
+        if (data.type === 'error' && typeof data.message === 'string') {
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                content: {
+                    type: 'error',
+                    message: data.message
+                },
+                isSidechain: false,
+                meta
+            }
+        }
+
         if (data.type === 'message' && typeof data.message === 'string') {
             const review = parseCodexReviewMessage(data.message)
             if (review) {
@@ -718,6 +733,45 @@ export function normalizeAgentRecord(
                     uuid,
                     parentUUID: null
                 }],
+                meta
+            }
+        }
+
+        if (data.type === 'plan') {
+            const plan = normalizePlanEntries(data.entries ?? data.items ?? data)
+            if (plan.length === 0) return null
+            const uuid = asString(data.id) ?? messageId
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'agent',
+                isSidechain: false,
+                content: [
+                    {
+                        type: 'tool-call',
+                        id: 'cursor-plan-state',
+                        name: 'update_plan',
+                        input: {
+                            plan,
+                            source: 'cursor'
+                        },
+                        description: null,
+                        uuid,
+                        parentUUID: null
+                    },
+                    {
+                        type: 'tool-result',
+                        tool_use_id: 'cursor-plan-state',
+                        content: {
+                            plan,
+                            source: 'cursor'
+                        },
+                        is_error: false,
+                        uuid,
+                        parentUUID: null
+                    }
+                ],
                 meta
             }
         }

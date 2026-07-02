@@ -16,6 +16,11 @@ export interface EnhancedMode {
     model?: string;
     collaborationMode: CodexCollaborationMode;
     modelReasoningEffort?: ReasoningEffort;
+    /**
+     * Service tier override. `undefined` leaves it untouched (account default),
+     * `'fast'` enables Fast mode, `null` selects the standard tier explicitly.
+     */
+    serviceTier?: string | null;
 }
 
 interface LoopOptions {
@@ -33,6 +38,7 @@ interface LoopOptions {
     modelReasoningEffort?: ReasoningEffort;
     collaborationMode?: CodexCollaborationMode;
     resumeSessionId?: string;
+    replayTranscriptHistoryOnStart?: boolean;
     onSessionReady?: (session: CodexSession) => void;
 }
 
@@ -56,7 +62,8 @@ export async function loop(opts: LoopOptions): Promise<void> {
         permissionMode: opts.permissionMode ?? 'default',
         model: opts.model,
         modelReasoningEffort: opts.modelReasoningEffort,
-        collaborationMode: opts.collaborationMode ?? 'default'
+        collaborationMode: opts.collaborationMode ?? 'default',
+        replayTranscriptHistoryOnStart: opts.replayTranscriptHistoryOnStart ?? false
     });
 
     await runLocalRemoteSession({

@@ -1,7 +1,29 @@
 import type { Database } from 'bun:sqlite'
 
 import type { StoredMessage } from './types'
-import { addMessage, cancelQueuedMessage, deleteQueuedMessageById, lookupQueuedMessage, getMessages, getFirstMessages, getDeliverableMessagesAfter, getMessagesByPosition, getUninvokedLocalMessages, getMatureScheduledMessages, getImmediateQueuedLocalMessages, countFutureScheduledBySessionIds, countFutureScheduledLocalMessages, markMessagesInvoked, mergeSessionMessages, type CancelQueuedMessageResult, type LookupQueuedMessageResult } from './messages'
+import {
+    addMessage,
+    cancelQueuedMessage,
+    deleteQueuedMessageById,
+    lookupQueuedMessage,
+    getMessages,
+    getFirstMessages,
+    getDeliverableMessagesAfter,
+    getMessagesByPosition,
+    getUninvokedLocalMessages,
+    getMatureScheduledMessages,
+    getImmediateQueuedLocalMessages,
+    countFutureScheduledBySessionIds,
+    countFutureScheduledLocalMessages,
+    minFutureScheduledAtBySessionIds,
+    countMessages,
+    markMessagesInvoked,
+    mergeSessionMessages,
+    copyMessageToSession as copyStoredMessageToSession,
+    getAllMessages,
+    type CancelQueuedMessageResult,
+    type LookupQueuedMessageResult,
+} from './messages'
 
 export class MessageStore {
     private readonly db: Database
@@ -12,6 +34,17 @@ export class MessageStore {
 
     addMessage(sessionId: string, content: unknown, localId?: string, scheduledAt?: number | null): StoredMessage {
         return addMessage(this.db, sessionId, content, localId, scheduledAt)
+    }
+
+    copyMessageToSession(
+        sessionId: string,
+        message: Pick<StoredMessage, 'content' | 'createdAt' | 'localId' | 'invokedAt' | 'scheduledAt'>
+    ): StoredMessage {
+        return copyStoredMessageToSession(this.db, sessionId, message)
+    }
+
+    getAllMessages(sessionId: string): StoredMessage[] {
+        return getAllMessages(this.db, sessionId)
     }
 
     getMessages(sessionId: string, limit: number = 200): StoredMessage[] {
@@ -48,6 +81,14 @@ export class MessageStore {
 
     countFutureScheduledBySessionIds(sessionIds: string[], now: number = Date.now()): Map<string, number> {
         return countFutureScheduledBySessionIds(this.db, sessionIds, now)
+    }
+
+    minFutureScheduledAtBySessionIds(sessionIds: string[], now: number = Date.now()): Map<string, number> {
+        return minFutureScheduledAtBySessionIds(this.db, sessionIds, now)
+    }
+
+    countMessages(sessionId: string): number {
+        return countMessages(this.db, sessionId)
     }
 
     cancelQueuedMessage(sessionId: string, messageId: string): CancelQueuedMessageResult {

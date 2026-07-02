@@ -28,6 +28,11 @@ function toStoredMessage(row: DbMessageRow): StoredMessage {
     }
 }
 
+export type CopyStoredMessageInput = Pick<
+    StoredMessage,
+    'content' | 'createdAt' | 'localId' | 'invokedAt' | 'scheduledAt'
+>
+
 export function addMessage(
     db: Database,
     sessionId: string,
@@ -92,6 +97,54 @@ export function addMessage(
     return toStoredMessage(row)
 }
 
+export function copyMessageToSession(
+    db: Database,
+    sessionId: string,
+    message: CopyStoredMessageInput
+): StoredMessage {
+    const createdAt = Number.isFinite(message.createdAt) ? message.createdAt : Date.now()
+    const nextSeq = getMaxSeq(db, sessionId) + 1
+
+    let localId = message.localId
+    if (localId) {
+        const collision = db.prepare(
+            'SELECT 1 FROM messages WHERE session_id = ? AND local_id = ? LIMIT 1'
+        ).get(sessionId, localId) as { 1: number } | undefined
+        if (collision) {
+            localId = `${localId}:merged:${randomUUID().slice(0, 8)}`
+        }
+    }
+
+    if (message.scheduledAt != null && !localId && message.invokedAt === null) {
+        localId = `merged-scheduled:${randomUUID()}`
+    }
+
+    const invokedAt = localId ? message.invokedAt : (message.invokedAt ?? createdAt)
+    const id = randomUUID()
+    db.prepare(`
+        INSERT INTO messages (
+            id, session_id, content, created_at, seq, local_id, invoked_at, scheduled_at
+        ) VALUES (
+            @id, @session_id, @content, @created_at, @seq, @local_id, @invoked_at, @scheduled_at
+        )
+    `).run({
+        id,
+        session_id: sessionId,
+        content: JSON.stringify(message.content),
+        created_at: createdAt,
+        seq: nextSeq,
+        local_id: localId ?? null,
+        invoked_at: invokedAt ?? null,
+        scheduled_at: message.scheduledAt ?? null
+    })
+
+    const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as DbMessageRow | undefined
+    if (!row) {
+        throw new Error('Failed to copy message into target session')
+    }
+    return toStoredMessage(row)
+}
+
 export function getMessages(
     db: Database,
     sessionId: string,
@@ -104,6 +157,17 @@ export function getMessages(
     ).all(sessionId, safeLimit) as DbMessageRow[]
 
     return rows.reverse().map(toStoredMessage)
+}
+
+export function getAllMessages(
+    db: Database,
+    sessionId: string
+): StoredMessage[] {
+    const rows = db.prepare(
+        'SELECT * FROM messages WHERE session_id = ? ORDER BY seq ASC'
+    ).all(sessionId) as DbMessageRow[]
+
+    return rows.map(toStoredMessage)
 }
 
 export function getFirstMessages(
@@ -233,6 +297,21 @@ export function getImmediateQueuedLocalMessages(
     return rows.map(toStoredMessage)
 }
 
+/**
+ * Total messages persisted for a session - any role, any state (including
+ * future-scheduled and never-invoked queued rows). Used as the
+ * "is this session non-trivial?" signal for the cursor migrator's size
+ * sanity check; intentionally broad so a session with 6 000 unread agent
+ * outputs and zero invoked user turns still counts as non-trivial.
+ * tiann/hapi#872.
+ */
+export function countMessages(db: Database, sessionId: string): number {
+    const row = db.prepare(
+        'SELECT COUNT(*) AS count FROM messages WHERE session_id = ?'
+    ).get(sessionId) as { count: number } | undefined
+    return row?.count ?? 0
+}
+
 /** Count uninvoked local messages scheduled for a future time (session list indicator). */
 export function countFutureScheduledLocalMessages(
     db: Database,
@@ -278,6 +357,35 @@ export function countFutureScheduledBySessionIds(
         counts.set(row.session_id, row.count)
     }
     return counts
+}
+
+/** Earliest future scheduled_at per session (session-list clock tooltip). */
+export function minFutureScheduledAtBySessionIds(
+    db: Database,
+    sessionIds: string[],
+    now: number
+): Map<string, number> {
+    const nextAt = new Map<string, number>()
+    if (sessionIds.length === 0) {
+        return nextAt
+    }
+
+    const placeholders = sessionIds.map(() => '?').join(',')
+    const rows = db.prepare(`
+        SELECT session_id, MIN(scheduled_at) AS next_at
+        FROM messages
+        WHERE session_id IN (${placeholders})
+          AND invoked_at IS NULL
+          AND local_id IS NOT NULL
+          AND scheduled_at IS NOT NULL
+          AND scheduled_at > ?
+        GROUP BY session_id
+    `).all(...sessionIds, now) as { session_id: string; next_at: number }[]
+
+    for (const row of rows) {
+        nextAt.set(row.session_id, row.next_at)
+    }
+    return nextAt
 }
 
 export function getMaxSeq(db: Database, sessionId: string): number {

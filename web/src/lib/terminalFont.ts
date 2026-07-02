@@ -125,7 +125,7 @@ function hasLocalNerdFont(): boolean {
 }
 
 /**
- * 获取字体 Provider（懒加载，只加载一次）
+ * Return the lazy-loaded terminal font provider singleton.
  */
 export function getFontProvider(): ITerminalFontProvider {
     return fontProvider

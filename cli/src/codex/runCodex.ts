@@ -31,6 +31,7 @@ export async function runCodex(opts: {
     resumeSessionId?: string;
     model?: string;
     modelReasoningEffort?: ReasoningEffort;
+    serviceTier?: string;
     collaborationMode?: EnhancedMode['collaborationMode'];
     existingSessionId?: string;
     workingDirectory?: string;
@@ -58,7 +59,7 @@ export async function runCodex(opts: {
             model: opts.model,
             modelReasoningEffort: opts.modelReasoningEffort
         });
-    const { api, session } = bootstrap;
+    const { api, session, sessionInfo } = bootstrap;
 
     const startingMode: 'local' | 'remote' = startedBy === 'runner' ? 'remote' : 'local';
 
@@ -68,16 +69,27 @@ export async function runCodex(opts: {
         permissionMode: mode.permissionMode,
         model: mode.model,
         modelReasoningEffort: mode.modelReasoningEffort,
-        collaborationMode: mode.collaborationMode
+        collaborationMode: mode.collaborationMode,
+        serviceTier: mode.serviceTier
     }));
 
     const codexCliOverrides = parseCodexCliOverrides(opts.codexArgs);
     const sessionWrapperRef: { current: CodexSession | null } = { current: null };
+    // New Hapi imports need the existing transcript replayed once; existing
+    // Hapi sessions stay incremental so old messages are not duplicated.
+    const replayTranscriptHistoryOnStart = Boolean(opts.resumeSessionId && !opts.existingSessionId);
 
     let currentPermissionMode: PermissionMode = opts.permissionMode ?? 'default';
     let currentModel = opts.model;
     let currentModelReasoningEffort: ReasoningEffort | undefined = opts.modelReasoningEffort;
     let currentCollaborationMode: EnhancedMode['collaborationMode'] = opts.collaborationMode ?? 'default';
+    // Service tier (Fast mode), stored representation: `'fast'` and
+    // `'standard'` are explicit user choices, `undefined`/`null` mean untouched
+    // (use the account default). Prefer the spawn-time override (set by the hub
+    // when resuming a session, mirroring model/effort) so a resumed Fast/Standard
+    // thread immediately runs with the right tier; otherwise seed from the
+    // persisted session. A persisted/absent `null` stays untouched (omitted).
+    let currentServiceTier: string | null | undefined = opts.serviceTier ?? sessionInfo.serviceTier ?? undefined;
 
     const lifecycle = createRunnerLifecycle({
         session,
@@ -86,7 +98,7 @@ export async function runCodex(opts: {
     });
 
     lifecycle.registerProcessHandlers();
-    registerKillSessionHandler(session.rpcHandlerManager, lifecycle.cleanupAndExit);
+    registerKillSessionHandler(session.rpcHandlerManager, lifecycle);
     registerLocalHandoffHandler(session.rpcHandlerManager, lifecycle);
 
     const applyCurrentConfigToSession = (options?: { syncModel?: boolean }) => {
@@ -99,6 +111,12 @@ export async function runCodex(opts: {
             sessionInstance.setModel(currentModel ?? null);
         }
         sessionInstance.setModelReasoningEffort(currentModelReasoningEffort ?? null);
+        // Preserve the third state: only sync when the user/persisted session
+        // has an explicit tier. `undefined` means "omit" so the keepalive does
+        // not overwrite the account-default or persisted Fast tier with null.
+        if (currentServiceTier !== undefined) {
+            sessionInstance.setServiceTier(currentServiceTier);
+        }
         sessionInstance.setCollaborationMode(currentCollaborationMode);
         logger.debug(
             `[Codex] Synced session config for keepalive: ` +
@@ -112,6 +130,7 @@ export async function runCodex(opts: {
         model?: string | null;
         modelReasoningEffort?: ReasoningEffort | null;
         collaborationMode?: EnhancedMode['collaborationMode'];
+        serviceTier?: string | null;
     } | undefined): void => {
         if (!updates) return;
         if (updates.permissionMode !== undefined) {
@@ -125,6 +144,9 @@ export async function runCodex(opts: {
         }
         if (updates.collaborationMode !== undefined) {
             currentCollaborationMode = updates.collaborationMode;
+        }
+        if (updates.serviceTier !== undefined) {
+            currentServiceTier = updates.serviceTier;
         }
         applyCurrentConfigToSession();
     };
@@ -146,6 +168,10 @@ export async function runCodex(opts: {
         if (sessionCollaborationMode) {
             currentCollaborationMode = sessionCollaborationMode;
         }
+        const sessionServiceTier = sessionWrapperRef.current?.getServiceTier();
+        if (sessionServiceTier !== undefined) {
+            currentServiceTier = sessionServiceTier;
+        }
     };
 
     let userMessageChain: Promise<void> = Promise.resolve();
@@ -161,7 +187,8 @@ export async function runCodex(opts: {
                     permissionMode: currentPermissionMode,
                     collaborationMode: currentCollaborationMode,
                     model: currentModel,
-                    modelReasoningEffort: currentModelReasoningEffort
+                    modelReasoningEffort: currentModelReasoningEffort,
+                    serviceTier: currentServiceTier
                 });
                 if (slash.kind === 'goal') {
                     if (slash.message) {
@@ -180,7 +207,8 @@ export async function runCodex(opts: {
                         permissionMode: currentPermissionMode ?? 'default',
                         model: currentModel,
                         modelReasoningEffort: currentModelReasoningEffort,
-                        collaborationMode: currentCollaborationMode
+                        collaborationMode: currentCollaborationMode,
+                        serviceTier: currentServiceTier
                     }, localId);
                     return;
                 }
@@ -218,7 +246,8 @@ export async function runCodex(opts: {
                     permissionMode: messagePermissionMode ?? 'default',
                     model: currentModel,
                     modelReasoningEffort: currentModelReasoningEffort,
-                    collaborationMode: currentCollaborationMode
+                    collaborationMode: currentCollaborationMode,
+                    serviceTier: currentServiceTier
                 };
                 if (isolatedCommandText) {
                     messageQueue.pushIsolateAndClear(isolatedCommandText, enhancedMode, localId);
@@ -231,7 +260,8 @@ export async function runCodex(opts: {
                     permissionMode: currentPermissionMode ?? 'default',
                     model: currentModel,
                     modelReasoningEffort: currentModelReasoningEffort,
-                    collaborationMode: currentCollaborationMode
+                    collaborationMode: currentCollaborationMode,
+                    serviceTier: currentServiceTier
                 };
                 messageQueue.push(formatMessageWithAttachments(message.content.text, message.content.attachments), enhancedMode, localId);
             }
@@ -294,11 +324,33 @@ export async function runCodex(opts: {
         return trimmedValue;
     };
 
+    // Stored representation: `'fast'` and `'standard'` are explicit user
+    // choices; `null` means untouched (use the account default). The
+    // `'standard'` sentinel is only translated to the Codex app-server's
+    // `serviceTier: null` when building thread/turn params — see
+    // appServerConfig — so an explicit Fast-off stays sticky across resume.
+    const resolveServiceTier = (value: unknown): string | null => {
+        if (value === null) {
+            return null;
+        }
+        if (typeof value !== 'string') {
+            throw new Error('Invalid service tier');
+        }
+        const trimmedValue = value.trim().toLowerCase();
+        if (trimmedValue === 'fast' || trimmedValue === 'standard') {
+            return trimmedValue;
+        }
+        if (!trimmedValue || trimmedValue === 'default' || trimmedValue === 'auto') {
+            return null;
+        }
+        throw new Error('Invalid service tier');
+    };
+
     session.rpcHandlerManager.registerHandler(RPC_METHODS.SetSessionConfig, async (payload: unknown) => {
         if (!payload || typeof payload !== 'object') {
             throw new Error('Invalid session config payload');
         }
-        const config = payload as { permissionMode?: unknown; model?: unknown; modelReasoningEffort?: unknown; collaborationMode?: unknown };
+        const config = payload as { permissionMode?: unknown; model?: unknown; modelReasoningEffort?: unknown; collaborationMode?: unknown; serviceTier?: unknown };
 
         if (config.permissionMode !== undefined) {
             currentPermissionMode = resolvePermissionMode(config.permissionMode);
@@ -317,16 +369,22 @@ export async function runCodex(opts: {
             currentCollaborationMode = resolveCollaborationMode(config.collaborationMode);
         }
 
+        if (config.serviceTier !== undefined) {
+            currentServiceTier = resolveServiceTier(config.serviceTier);
+        }
+
         applyCurrentConfigToSession({ syncModel: shouldSyncModel });
         const applied: {
             permissionMode: PermissionMode;
             model?: string | null;
             modelReasoningEffort: ReasoningEffort | null;
             collaborationMode: EnhancedMode['collaborationMode'];
+            serviceTier: string | null;
         } = {
             permissionMode: currentPermissionMode,
             modelReasoningEffort: currentModelReasoningEffort ?? null,
-            collaborationMode: currentCollaborationMode
+            collaborationMode: currentCollaborationMode,
+            serviceTier: currentServiceTier ?? null
         };
         if (shouldSyncModel) {
             applied.model = currentModel ?? null;
@@ -353,6 +411,7 @@ export async function runCodex(opts: {
             modelReasoningEffort: currentModelReasoningEffort,
             collaborationMode: currentCollaborationMode,
             resumeSessionId: opts.resumeSessionId,
+            replayTranscriptHistoryOnStart,
             onModeChange: createModeChangeHandler(session),
             onSessionReady: (instance) => {
                 sessionWrapperRef.current = instance;

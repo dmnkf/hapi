@@ -1,4 +1,5 @@
 import {
+    CursorMigrateToAcpRequestSchema,
     DeleteUploadRequestSchema,
     getPermissionModesForFlavor,
     isPermissionModeAllowedForFlavor,
@@ -7,14 +8,17 @@ import {
     SessionCollaborationModeRequestSchema,
     SessionEffortRequestSchema,
     SessionModelReasoningEffortRequestSchema,
+    SessionServiceTierRequestSchema,
     SessionModelRequestSchema,
     SessionPermissionModeRequestSchema,
     supportsModelChange,
+    supportsEffort,
     toSessionSummary,
     UploadFileRequestSchema
 } from '@hapi/protocol'
+import { RPC_METHODS } from '@hapi/protocol/rpcMethods'
 import type { SlashCommand } from '@hapi/protocol/apiTypes'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import type { SyncEngine, Session } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
@@ -80,15 +84,40 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
                 return b.updatedAt - a.updatedAt
             })
         const scheduledCounts = engine.getFutureScheduledMessageCounts(sessionRecords.map((session) => session.id))
+        const nextScheduledAt = engine.getNextScheduledAtBySessionIds(sessionRecords.map((session) => session.id))
         const sessions = sessionRecords.map((session) => {
             const summary = toSessionSummary(session)
             return {
                 ...summary,
-                futureScheduledMessageCount: scheduledCounts.get(session.id) ?? 0
+                futureScheduledMessageCount: scheduledCounts.get(session.id) ?? 0,
+                nextScheduledAt: nextScheduledAt.get(session.id) ?? null
             }
         })
 
         return c.json({ sessions })
+    })
+
+    app.get('/sessions/:id/export', (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+
+        const result = engine.getSessionExport(sessionResult.sessionId, sessionResult.session)
+        if (result.type === 'too-large') {
+            return c.json({
+                error: 'Session export too large',
+                count: result.count,
+                limit: result.limit
+            }, 413)
+        }
+
+        return c.json(result.payload)
     })
 
     app.get('/sessions/:id', (c) => {
@@ -146,6 +175,42 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         return c.json({ type: 'success', sessionId: result.sessionId })
+    })
+
+    app.post('/sessions/:id/reopen', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine, { requireActive: false })
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+
+        const namespace = c.get('namespace')
+        const result = await engine.reopenSession(sessionResult.sessionId, namespace)
+
+        if (result.type === 'incomplete') {
+            return c.json({ error: result.message, missing: result.missing }, 422)
+        }
+
+        if (result.type === 'error') {
+            const status = result.code === 'no_machine_online' ? 503
+                : result.code === 'access_denied' ? 403
+                    : result.code === 'session_not_found' ? 404
+                        : result.code === 'resume_unavailable' ? 409
+                            : result.code === 'metadata_conflict' ? 409
+                                : 500
+            return c.json({ error: result.message, code: result.code }, status)
+        }
+
+        return c.json({
+            ok: true,
+            sessionId: result.sessionId,
+            resumed: result.resumed,
+            ...(result.cursorSessionProtocol ? { cursorSessionProtocol: result.cursorSessionProtocol } : {})
+        })
     })
 
     app.post('/sessions/:id/upload', async (c) => {
@@ -230,18 +295,81 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
     })
 
     app.post('/sessions/:id/archive', async (c) => {
+        // tiann/hapi#916: relax the blanket `requireActive: true` guard so
+        // the endpoint is idempotent for already-archived rows AND can clean
+        // up split-brain rows after a hub-restart cascade (inactive in cache
+        // but metadata.lifecycleState still 'running'). Normal inactive rows
+        // that are not archived (completed stubs, UI Delete/Reopen targets)
+        // keep the old 409 contract.
         const engine = requireSyncEngine(c, getSyncEngine)
         if (engine instanceof Response) {
             return engine
         }
 
-        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        const sessionResult = requireSessionFromParam(c, engine)
         if (sessionResult instanceof Response) {
             return sessionResult
         }
 
+        const lifecycleState = sessionResult.session.metadata?.lifecycleState
+        if (lifecycleState === 'archived') {
+            return c.json({ ok: true, alreadyArchived: true })
+        }
+
+        if (!sessionResult.session.active && lifecycleState !== 'running') {
+            return c.json({ error: 'Session is inactive' }, 409)
+        }
+
         await engine.archiveSession(sessionResult.sessionId)
         return c.json({ ok: true })
+    })
+
+    app.post('/sessions/:id/migrate-to-acp', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+
+        // Codex #34 P2 (round 13): `c.req.json().catch(() => ({}))` silently
+        // converts malformed JSON into an empty object — which then passes
+        // CursorMigrateToAcpRequestSchema (all fields optional) and runs
+        // the migration with DESTRUCTIVE defaults (keepSource defaults to
+        // remove-after-flip). An operator who intended `{"keepSource": true}`
+        // but sent a truncated body would see the legacy store removed
+        // anyway. Distinguish "no body at all" (defaults are fine) from
+        // "malformed JSON" (reject with 400).
+        const rawBody = await c.req.text()
+        let body: unknown = {}
+        if (rawBody.trim().length > 0) {
+            try {
+                body = JSON.parse(rawBody)
+            } catch {
+                return c.json({ error: 'Invalid JSON body' }, 400)
+            }
+        }
+        const parsed = CursorMigrateToAcpRequestSchema.safeParse(body ?? {})
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body', issues: parsed.error.issues }, 400)
+        }
+
+        const namespace = c.get('namespace')
+        const outcome = await engine.migrateLegacyCursorSession(
+            sessionResult.sessionId,
+            namespace,
+            parsed.data
+        )
+        const status = outcome.ok ? 200
+            : outcome.reason === 'already_acp' || outcome.reason === 'not_cursor_session' || outcome.reason === 'no_cursor_session_id' ? 409
+                : outcome.reason === 'running_refused' ? 409
+                    : outcome.reason === 'target_already_exists' ? 409
+                        : outcome.reason === 'no_legacy_store_on_disk' ? 404
+                            : 500
+        return c.json(outcome, status)
     })
 
     app.post('/sessions/:id/switch', async (c) => {
@@ -355,8 +483,13 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         if (!supportsModelChange(flavor)) {
             return c.json({ error: 'Model selection is not supported for this session' }, 400)
         }
-        if (flavor === 'codex' && sessionResult.session.agentState?.controlledByUser === true) {
-            return c.json({ error: 'Model selection can only be changed for remote Codex sessions' }, 409)
+        if (sessionResult.session.agentState?.controlledByUser === true) {
+            if (flavor === 'codex') {
+                return c.json({ error: 'Model selection can only be changed for remote Codex sessions' }, 409)
+            }
+            if (flavor === 'cursor') {
+                return c.json({ error: 'Model selection can only be changed for remote Cursor sessions' }, 409)
+            }
         }
 
         try {
@@ -422,8 +555,8 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         const flavor = sessionResult.session.metadata?.flavor ?? 'claude'
-        if (flavor !== 'claude') {
-            return c.json({ error: 'Effort selection is only supported for Claude sessions' }, 400)
+        if (!supportsEffort(flavor)) {
+            return c.json({ error: 'Effort selection is not supported for this session type' }, 400)
         }
 
         try {
@@ -431,6 +564,42 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return c.json({ ok: true })
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to apply effort'
+            return c.json({ error: message }, 409)
+        }
+    })
+
+    app.post('/sessions/:id/service-tier', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+
+        const flavor = sessionResult.session.metadata?.flavor ?? 'claude'
+        if (flavor !== 'codex') {
+            return c.json({ error: 'Fast mode is only supported for Codex sessions' }, 400)
+        }
+        if (sessionResult.session.agentState?.controlledByUser === true) {
+            return c.json({ error: 'Fast mode can only be changed for remote sessions' }, 409)
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = SessionServiceTierRequestSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        try {
+            await engine.applySessionConfig(sessionResult.sessionId, {
+                serviceTier: parsed.data.serviceTier
+            })
+            return c.json({ ok: true })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to apply service tier'
             return c.json({ error: message }, 409)
         }
     })
@@ -624,6 +793,36 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
     })
 
+    app.get('/sessions/:id/opencode-reasoning-effort-options', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+
+        const flavor = sessionResult.session.metadata?.flavor ?? 'claude'
+        if (flavor !== 'opencode') {
+            return c.json({
+                success: false,
+                error: 'OpenCode reasoning effort options are only available for OpenCode sessions'
+            }, 400)
+        }
+
+        try {
+            const result = await engine.listOpencodeReasoningEffortOptionsForSession(sessionResult.sessionId)
+            return c.json(result)
+        } catch (error) {
+            return c.json({
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to list OpenCode reasoning effort options'
+            }, 500)
+        }
+    })
+
     app.get('/sessions/:id/cursor-models', async (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)
         if (engine instanceof Response) {
@@ -653,6 +852,39 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             }, 500)
         }
     })
+
+    // Helper: guard + flavor check + error handling for Pi session endpoints
+    async function withPiSession(
+        c: Context<WebAppEnv>,
+        handler: (ctx: { sessionId: string; engine: SyncEngine }) => Promise<Response>
+    ): Promise<Response> {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+
+        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        if (sessionResult instanceof Response) return sessionResult
+
+        const flavor = sessionResult.session.metadata?.flavor ?? 'claude'
+        if (flavor !== 'pi') {
+            return c.json({ success: false, error: 'Not a Pi session' }, 400)
+        }
+
+        try {
+            return await handler({ sessionId: sessionResult.sessionId, engine })
+        } catch (error) {
+            return c.json({
+                success: false,
+                error: error instanceof Error ? error.message : 'Internal error'
+            }, 500)
+        }
+    }
+
+    // --- Pi models ---
+    app.get('/sessions/:id/pi-models', (c) =>
+        withPiSession(c, async ({ sessionId, engine }) =>
+            c.json(await engine.callPiRpc(sessionId, RPC_METHODS.ListPiModels, {}, 120_000))
+        )
+    )
 
     return app
 }

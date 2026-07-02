@@ -178,6 +178,27 @@ describe('normalizeDecryptedMessage', () => {
         })
     })
 
+    it('normalizes agent error payloads as error events', () => {
+        const normalized = normalizeDecryptedMessage(makeMessage({
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'error',
+                    message: 'Cursor Agent failed: authentication required'
+                }
+            }
+        }))
+
+        expect(normalized).toMatchObject({
+            role: 'event',
+            content: {
+                type: 'error',
+                message: 'Cursor Agent failed: authentication required'
+            }
+        })
+    })
+
     it('treats non-sidechain string user output as sidechain', () => {
         const message = makeMessage({
             role: 'agent',
@@ -519,6 +540,54 @@ describe('normalizeDecryptedMessage', () => {
                 type: 'text',
                 text: '{"findings": ['
             }]
+        })
+    })
+
+    it('normalizes ACP plan messages as completed update_plan snapshots', () => {
+        const message = makeMessage({
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'plan',
+                    entries: [
+                        { content: 'Inspect event stream', status: 'completed' },
+                        { content: 'Render plan card', status: 'in_progress' }
+                    ],
+                    id: 'cursor-plan-1'
+                }
+            }
+        })
+
+        const normalized = normalizeDecryptedMessage(message)
+
+        expect(normalized).toMatchObject({
+            role: 'agent',
+            content: [
+                {
+                    type: 'tool-call',
+                    id: 'cursor-plan-state',
+                    name: 'update_plan',
+                    input: {
+                        plan: [
+                            { step: 'Inspect event stream', status: 'completed' },
+                            { step: 'Render plan card', status: 'in_progress' }
+                        ],
+                        source: 'cursor'
+                    }
+                },
+                {
+                    type: 'tool-result',
+                    tool_use_id: 'cursor-plan-state',
+                    content: {
+                        plan: [
+                            { step: 'Inspect event stream', status: 'completed' },
+                            { step: 'Render plan card', status: 'in_progress' }
+                        ],
+                        source: 'cursor'
+                    }
+                }
+            ]
         })
     })
 

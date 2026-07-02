@@ -8,7 +8,7 @@ HAPI is a local-first, self-hosted platform for running and controlling AI codin
 
 ### What does HAPI stand for?
 
-HAPI (哈皮) is a Chinese transliteration of "Happy", reflecting the project's goal of making AI coding assistance a happier experience by freeing you from the terminal.
+HAPI is the project name for a local-first remote-control layer around coding agents.
 
 ### Is HAPI free?
 

@@ -26,7 +26,7 @@ export class ServerChanChannel implements NotificationChannel {
         const agentName = getAgentName(session)
         const name = getSessionName(session)
         const url = buildSessionUrl(this.publicUrl, session.id)
-        await this.send('HAPI Ready for input', `${agentName} 正在等待输入\n\n会话：${name}\n\n${url}`)
+        await this.send('HAPI Ready for input', `${agentName} is waiting for input\n\nSession: ${name}\n\n${url}`)
     }
 
     async sendPermissionRequest(session: Session): Promise<void> {
@@ -63,7 +63,7 @@ export class ServerChanChannel implements NotificationChannel {
         const agentName = getAgentName(session)
         const name = getSessionName(session)
         const url = buildSessionUrl(this.publicUrl, session.id)
-        await this.send('HAPI Session completed', `${agentName} · ${name}\n\n会话已结束。\n\n${url}`)
+        await this.send('HAPI Session completed', `${agentName} · ${name}\n\nSession ended.\n\n${url}`)
     }
 
     private async send(title: string, desp: string): Promise<void> {
@@ -83,7 +83,7 @@ export class ServerChanChannel implements NotificationChannel {
 
         if (!response.ok) {
             const text = await response.text().catch(() => '')
-            throw new Error(`Server酱发送失败: HTTP ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`)
+            throw new Error(`ServerChan send failed: HTTP ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`)
         }
     }
 }

@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { isPermissionModeAllowedForFlavor } from '@hapi/protocol'
 import type { ApiClient } from '@/api/client'
 import type { CodexCollaborationMode, PermissionMode } from '@/types/api'
+import type { ReopenSessionResponse } from '@hapi/protocol/apiTypes'
 import { queryKeys } from '@/lib/query-keys'
 import { clearMessageWindow } from '@/lib/message-window-store'
 import { isKnownFlavor } from '@hapi/protocol'
@@ -14,12 +15,14 @@ export function useSessionActions(
 ): {
     abortSession: () => Promise<void>
     archiveSession: () => Promise<void>
+    reopenSession: () => Promise<ReopenSessionResponse>
     switchSession: () => Promise<void>
     setPermissionMode: (mode: PermissionMode) => Promise<void>
     setCollaborationMode: (mode: CodexCollaborationMode) => Promise<void>
-    setModel: (model: string | null) => Promise<void>
+    setModel: (model: { provider: string; modelId: string } | string | null) => Promise<void>
     setModelReasoningEffort: (modelReasoningEffort: string | null) => Promise<void>
     setEffort: (effort: string | null) => Promise<void>
+    setServiceTier: (serviceTier: string | null) => Promise<void>
     renameSession: (name: string) => Promise<void>
     deleteSession: () => Promise<void>
     isPending: boolean
@@ -30,6 +33,12 @@ export function useSessionActions(
         if (!sessionId) return
         await queryClient.invalidateQueries({ queryKey: queryKeys.session(sessionId) })
         await queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+    }
+
+    const invalidateCursorModels = async () => {
+        if (!sessionId || agentFlavor !== 'cursor') return
+        await queryClient.invalidateQueries({ queryKey: queryKeys.sessionCursorModels(sessionId) })
+        await queryClient.invalidateQueries({ queryKey: ['machine-cursor-models'] })
     }
 
     const abortMutation = useMutation({
@@ -48,6 +57,16 @@ export function useSessionActions(
                 throw new Error('Session unavailable')
             }
             await api.archiveSession(sessionId)
+        },
+        onSuccess: () => void invalidateSession(),
+    })
+
+    const reopenMutation = useMutation<ReopenSessionResponse, Error, void>({
+        mutationFn: async () => {
+            if (!api || !sessionId) {
+                throw new Error('Session unavailable')
+            }
+            return await api.reopenSession(sessionId)
         },
         onSuccess: () => void invalidateSession(),
     })
@@ -92,13 +111,18 @@ export function useSessionActions(
     })
 
     const modelMutation = useMutation({
-        mutationFn: async (model: string | null) => {
+        mutationFn: async (model: { provider: string; modelId: string } | string | null) => {
             if (!api || !sessionId) {
                 throw new Error('Session unavailable')
             }
             await api.setModel(sessionId, model)
         },
-        onSuccess: () => void invalidateSession(),
+        onSuccess: () => {
+            void (async () => {
+                await invalidateSession()
+                await invalidateCursorModels()
+            })()
+        },
     })
 
     const modelReasoningEffortMutation = useMutation({
@@ -123,6 +147,22 @@ export function useSessionActions(
                 throw new Error('Session unavailable')
             }
             await api.setEffort(sessionId, effort)
+        },
+        onSuccess: () => void invalidateSession(),
+    })
+
+    const serviceTierMutation = useMutation({
+        mutationFn: async (serviceTier: string | null) => {
+            if (!api || !sessionId) {
+                throw new Error('Session unavailable')
+            }
+            if (agentFlavor !== 'codex') {
+                throw new Error('Fast mode is only supported for Codex sessions')
+            }
+            if (!codexCollaborationModeSupported) {
+                throw new Error('Fast mode is only supported for remote sessions')
+            }
+            await api.setServiceTier(sessionId, serviceTier)
         },
         onSuccess: () => void invalidateSession(),
     })
@@ -155,22 +195,26 @@ export function useSessionActions(
     return {
         abortSession: abortMutation.mutateAsync,
         archiveSession: archiveMutation.mutateAsync,
+        reopenSession: reopenMutation.mutateAsync,
         switchSession: switchMutation.mutateAsync,
         setPermissionMode: permissionMutation.mutateAsync,
         setCollaborationMode: collaborationMutation.mutateAsync,
         setModel: modelMutation.mutateAsync,
         setModelReasoningEffort: modelReasoningEffortMutation.mutateAsync,
         setEffort: effortMutation.mutateAsync,
+        setServiceTier: serviceTierMutation.mutateAsync,
         renameSession: renameMutation.mutateAsync,
         deleteSession: deleteMutation.mutateAsync,
         isPending: abortMutation.isPending
             || archiveMutation.isPending
+            || reopenMutation.isPending
             || switchMutation.isPending
             || permissionMutation.isPending
             || collaborationMutation.isPending
             || modelMutation.isPending
             || modelReasoningEffortMutation.isPending
             || effortMutation.isPending
+            || serviceTierMutation.isPending
             || renameMutation.isPending
             || deleteMutation.isPending,
     }

@@ -8,18 +8,22 @@
  */
 
 import { isKnownFlavor, type LocalResumeTarget, type ResumableSession } from '@hapi/protocol'
-import type { SlashCommandsResponse } from '@hapi/protocol/apiTypes'
+import type { CursorMigrateOutcome, CursorMigrateToAcpRequest, SlashCommandsResponse } from '@hapi/protocol/apiTypes'
 import type { AgentFlavor, CodexCollaborationMode, DecryptedMessage, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
 import { unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 import type { Server } from 'socket.io'
 import type { Store, CancelQueuedMessageResult } from '../store'
+import type { HapiSessionExportResult } from '@hapi/protocol/sessionExport'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 import type { SSEManager } from '../sse/sseManager'
+import { CursorLegacyMigrator, type CursorLegacyMigratorOptions } from '../cursor/cursorLegacyMigrator'
+
 import { EventPublisher, type SyncEventListener } from './eventPublisher'
 import { MachineCache, type Machine } from './machineCache'
 import { MessageService } from './messageService'
 import {
     RpcGateway,
+    RpcTargetMissingError,
     type RpcCodexModel,
     type RpcCommandResponse,
     type RpcDeleteUploadResponse,
@@ -28,6 +32,7 @@ import {
     type RpcListCodexModelsResponse,
     type RpcListCursorModelsResponse,
     type RpcListOpencodeModelsResponse,
+    type RpcListOpencodeReasoningEffortOptionsResponse,
     type RpcCursorModel,
     type RpcOpencodeModel,
     type RpcPathExistsResponse,
@@ -48,6 +53,7 @@ export type {
     RpcListCodexModelsResponse,
     RpcListCursorModelsResponse,
     RpcListOpencodeModelsResponse,
+    RpcListOpencodeReasoningEffortOptionsResponse,
     RpcCursorModel,
     RpcOpencodeModel,
     RpcPathExistsResponse,
@@ -58,6 +64,11 @@ export type {
 export type ResumeSessionResult =
     | { type: 'success'; sessionId: string }
     | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'resume_unavailable' | 'resume_failed' }
+
+export type ReopenSessionResult =
+    | { type: 'success'; sessionId: string; resumed: boolean; cursorSessionProtocol?: 'acp' | 'stream-json' }
+    | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'resume_unavailable' | 'resume_failed' | 'metadata_conflict' }
+    | { type: 'incomplete'; message: string; missing: [string, ...string[]] }
 
 export type LocalResumeTargetResult =
     | { type: 'success'; target: LocalResumeTarget }
@@ -123,6 +134,8 @@ export class SyncEngine {
     private readonly messageService: MessageService
     private readonly rpcGateway: RpcGateway
     private inactivityTimer: NodeJS.Timeout | null = null
+    /** Sessions that emitted `session-ready` (Cursor ACP load/newSession complete). */
+    private readonly sessionReadyIds = new Set<string>()
 
     constructor(
         private readonly store: Store,
@@ -178,6 +191,10 @@ export class SyncEngine {
 
     getFutureScheduledMessageCounts(sessionIds: string[], now: number = Date.now()): Map<string, number> {
         return this.store.messages.countFutureScheduledBySessionIds(sessionIds, now)
+    }
+
+    getNextScheduledAtBySessionIds(sessionIds: string[], now: number = Date.now()): Map<string, number> {
+        return this.store.messages.minFutureScheduledAtBySessionIds(sessionIds, now)
     }
 
     getSession(sessionId: string): Session | undefined {
@@ -243,6 +260,10 @@ export class SyncEngine {
         return this.messageService.getMessagesPage(sessionId, options)
     }
 
+    getSessionExport(sessionId: string, session: Session): HapiSessionExportResult {
+        return this.messageService.getSessionExport(sessionId, session)
+    }
+
     getDeliverableMessagesAfter(sessionId: string, options: { afterSeq: number; limit: number; now: number }): DecryptedMessage[] {
         return this.messageService.getDeliverableMessagesAfter(sessionId, options)
     }
@@ -255,6 +276,9 @@ export class SyncEngine {
             this.sessionCache.refreshSession(event.sessionId)
             const after = this.sessionCache.getSession(event.sessionId)
             if (after?.metadata && !this.hasSameAgentSessionIds(before?.metadata ?? null, after.metadata)) {
+                if (!this.canRunCursorDedup(after)) {
+                    return
+                }
                 void this.sessionCache.deduplicateByAgentSessionId(event.sessionId).catch(() => {
                     // best-effort: dedup failure is harmless, web-side safety net hides remaining duplicates
                 })
@@ -285,9 +309,15 @@ export class SyncEngine {
         model?: string | null
         modelReasoningEffort?: string | null
         effort?: string | null
+        serviceTier?: string | null
         collaborationMode?: CodexCollaborationMode
     }): void {
         this.sessionCache.handleSessionAlive(payload)
+        this.triggerDedupIfNeeded(payload.sid)
+    }
+
+    handleSessionReady(payload: { sid: string; time: number }): void {
+        this.sessionReadyIds.add(payload.sid)
         this.triggerDedupIfNeeded(payload.sid)
     }
 
@@ -296,6 +326,11 @@ export class SyncEngine {
     }
 
     handleSessionEnd(payload: { sid: string; time: number; reason?: 'completed' | 'terminated' | 'error' }): void {
+        const before = this.sessionCache.getSession(payload.sid)
+        const isCursorAcp = before?.metadata?.flavor === 'cursor'
+            && before.metadata.cursorSessionProtocol === 'acp'
+        const shouldRetryDedup = !isCursorAcp || this.sessionReadyIds.has(payload.sid)
+
         this.sessionCache.handleSessionEnd(payload)
         this.eventPublisher.emit({
             type: 'session-ended',
@@ -303,8 +338,12 @@ export class SyncEngine {
             reason: payload.reason
         })
         // Retry dedup now that this session is inactive — a prior dedup may have
-        // skipped it because it was still active at the time.
-        this.triggerDedupIfNeeded(payload.sid)
+        // skipped it because it was still active at the time. Cursor ACP rows that
+        // never reached session-ready must not dedup-merge the original on failure.
+        if (shouldRetryDedup) {
+            this.triggerDedupIfNeeded(payload.sid)
+        }
+        this.sessionReadyIds.delete(payload.sid)
     }
 
     handleBackgroundTaskDelta(sessionId: string, delta: { started: number; completed: number }): void {
@@ -315,7 +354,7 @@ export class SyncEngine {
         this.sessionCache.recordSessionActivity(sessionId, updatedAt)
     }
 
-    handleMachineAlive(payload: { machineId: string; time: number }): void {
+    handleMachineAlive(payload: { machineId: string; time: number; health?: unknown }): void {
         this.machineCache.handleMachineAlive(payload)
     }
 
@@ -414,8 +453,194 @@ export class SyncEngine {
     }
 
     async archiveSession(sessionId: string): Promise<void> {
-        await this.rpcGateway.killSession(sessionId)
+        // tiann/hapi#916: when the CLI is already gone (e.g. after a
+        // hub-restart cascade SIGTERMed the runner but the in-memory
+        // `active` flag has not been reconciled yet) the kill-RPC throws
+        // and the route used to surface that as HTTP 500. Treat the
+        // missing target as a benign condition: still flip the session's
+        // lifecycleState to `archived` in the hub-side metadata so the
+        // UI does not see a half-cleaned zombie, and continue to mark
+        // it inactive in the cache. Real RPC errors (timeout, protocol
+        // failure) still propagate as 5xx.
+        try {
+            await this.rpcGateway.killSession(sessionId)
+        } catch (error) {
+            if (error instanceof RpcTargetMissingError) {
+                this.sessionCache.markSessionArchivedFromHub(sessionId, 'Archived from hub (CLI unreachable)')
+            } else {
+                throw error
+            }
+        }
         this.handleSessionEnd({ sid: sessionId, time: Date.now() })
+    }
+
+    /**
+     * Apply the post-migration metadata flip in hapi.db:
+     *   - metadata.cursorSessionProtocol = 'acp'
+     *   - session.model = lastUsedModel (if provided)
+     *
+     * Returns 'success' on a clean write, 'version-mismatch' if the metadata
+     * version moved underneath us (caller retries) or 'not-found' if the row
+     * is gone.
+     *
+     * Used by CursorLegacyMigrator after the on-disk transplant + verify
+     * succeeds. Kept on the engine (not on the migrator) so that all hapi.db
+     * writes funnel through the existing cache-refresh path.
+     */
+    flipCursorSessionProtocolToAcp(
+        sessionId: string,
+        namespace: string,
+        lastUsedModel: string | null
+    ): { result: 'success' | 'version-mismatch' | 'not-found' | 'session-active' } {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            const latest = this.sessionCache.getSessionByNamespace(sessionId, namespace)
+                ?? this.sessionCache.refreshSession(sessionId)
+            if (!latest?.metadata) {
+                return { result: 'not-found' }
+            }
+            // Combined SSE-event payload contract (UX A++): clear the
+            // `cursorMigrationState='in_progress'` flag in the SAME metadata
+            // write that flips `cursorSessionProtocol` to 'acp'. The web
+            // banner keys off `cursorMigrationState`, so a single SSE
+            // session-updated event swaps both atomically — banner gone,
+            // protocol flipped — preventing a flicker window where the
+            // banner has already disappeared but the chat hasn't re-rendered
+            // to the ACP transport yet.
+            const carriedMigrationState = latest.metadata.cursorMigrationState
+            // Atomic active-check inside the same synchronous flip op so
+            // that a resume cannot land between the migrator's recheck
+            // and the actual DB update. Bun is single-threaded — once
+            // we've read `latest` and the row is inactive, no other JS
+            // can mutate active=true until this method returns. Codex
+            // review #34 P1 v2: the migrator's recheck is best-effort;
+            // this is the authoritative gate.
+            //
+            // Codex review #34 P2 v5: only block on `active === true`,
+            // NOT on lifecycleState === 'running'. After a force-archive
+            // flow archiveSession() synchronously sets active=false but
+            // the cleanup metadata write that flips lifecycleState
+            // 'running' → 'archived' may still be in-flight, and that
+            // is OUR archive completing, not a resume race. The active
+            // flag is the authoritative live-runner signal.
+            if (latest.active === true) {
+                return { result: 'session-active' }
+            }
+            // Codex review #34 P2 v7: ALSO clear a stale lifecycleState
+            // value if it still says 'running'. The migrator now skips
+            // archiveSession() for stale-running rows (active=false but
+            // lifecycle=running with --force-archive-running) because
+            // there's no live runner to archive. Without this fixup,
+            // successfully migrated stale rows would retain lifecycle=
+            // running forever and any downstream code that filters by
+            // lifecycleState (not the cache active flag) would keep
+            // treating archived ACP sessions as live.
+            const oldLifecycle = typeof latest.metadata.lifecycleState === 'string' ? latest.metadata.lifecycleState : undefined
+            const nextMetadata: typeof latest.metadata = {
+                ...latest.metadata,
+                cursorSessionProtocol: 'acp' as const,
+                ...(oldLifecycle === 'running' ? { lifecycleState: 'archived' as const } : {})
+            }
+            // Drop the migration-in-progress flag in the same write (see
+            // header comment). Safe whether or not it was set.
+            if (carriedMigrationState !== undefined) {
+                delete nextMetadata.cursorMigrationState
+            }
+            const result = this.store.sessions.updateSessionMetadata(
+                sessionId,
+                nextMetadata,
+                latest.metadataVersion,
+                namespace,
+                { touchUpdatedAt: false }
+            )
+            if (result.result === 'version-mismatch') {
+                this.sessionCache.refreshSession(sessionId)
+                continue
+            }
+            if (result.result !== 'success') {
+                return { result: 'not-found' }
+            }
+            this.sessionCache.refreshSession(sessionId)
+            if (lastUsedModel && lastUsedModel.trim().length > 0) {
+                this.store.sessions.setSessionModel(sessionId, lastUsedModel.trim(), namespace, { touchUpdatedAt: false })
+                this.sessionCache.refreshSession(sessionId)
+            }
+            return { result: 'success' }
+        }
+        return { result: 'version-mismatch' }
+    }
+
+    /**
+     * Migrate a single legacy cursor session to ACP. Hub-side; runs on the
+     * operator's machine (the hub host); see tiann/hapi#824 design.
+     * Returns a structured outcome (ok or refusal); does not throw.
+     */
+    async migrateLegacyCursorSession(
+        sessionId: string,
+        namespace: string,
+        request: CursorMigrateToAcpRequest
+    ): Promise<CursorMigrateOutcome> {
+        const session = this.sessionCache.getSessionByNamespace(sessionId, namespace)
+            ?? this.sessionCache.refreshSession(sessionId)
+        if (!session) {
+            return { ok: false, sessionId, reason: 'internal_error', message: 'session not found in namespace', durationMs: 0 }
+        }
+        const migrator = this.buildMigratorForRequest(request)
+        return migrator.migrateOne(session, {
+            keepSource: request.keepSource,
+            forceArchiveRunning: request.forceArchiveRunning,
+            skipVerify: request.skipVerify
+        })
+    }
+
+    private buildMigratorForRequest(_request: CursorMigrateToAcpRequest): CursorLegacyMigrator {
+        const migratorOpts: CursorLegacyMigratorOptions = {}
+        return new CursorLegacyMigrator(migratorOpts, {
+            archiveSession: async (sessionId) => {
+                await this.archiveSession(sessionId)
+            },
+            // NOTE: no awaitSessionInactive injection — handleSessionEnd()
+            // synchronously sets cache.active=false inside archiveSession,
+            // so any cache-based poll would return immediately and provide
+            // false reassurance. The migrator now relies on
+            // awaitLockRelease's minimum-dwell + SQLite busy-probe +
+            // size-stability combination instead. Codex review #34 P1 v3.
+            getCurrentSession: (sessionId, namespace) => {
+                const s = this.sessionCache.getSessionByNamespace(sessionId, namespace)
+                if (!s) return null
+                return {
+                    active: s.active === true,
+                    lifecycleState: typeof s.metadata?.lifecycleState === 'string' ? s.metadata.lifecycleState : undefined,
+                    cursorSessionProtocol: typeof s.metadata?.cursorSessionProtocol === 'string' ? s.metadata.cursorSessionProtocol : undefined
+                }
+            },
+            updateSessionAfterMigrate: (sessionId, namespace, lastUsedModel) => {
+                const result = this.flipCursorSessionProtocolToAcp(sessionId, namespace, lastUsedModel)
+                if (result.result === 'success') return { ok: true }
+                if (result.result === 'session-active') return { ok: false, reason: 'session_active' as const }
+                return { ok: false, reason: 'version_mismatch_or_missing' as const }
+            },
+            // tiann/hapi#872: size sanity check needs to compare HAPI's known
+            // message history against the candidate legacy store's blob
+            // count. The store-handle stays on the engine; we only thread
+            // the count through so the migrator stays free of a direct
+            // hub.Store dependency.
+            getHapiMessageCount: (sessionId, _namespace) => {
+                try {
+                    return this.store.messages.countMessages(sessionId)
+                } catch (err) {
+                    // tiann/hapi#873 cold review: a silent 0 here trips
+                    // the migrator's "skip sanity" branch and chronically
+                    // disables the floor. Warn so a broken countMessages
+                    // (lock contention pattern, schema drift) is visible
+                    // in journalctl.
+                    console.warn('[auto-migrate] countMessages threw; size sanity skipped', {
+                        sessionId,
+                        err: err instanceof Error ? err.message : String(err)
+                    })
+                    return 0
+                }
+            }
+        })
     }
 
     async switchSession(sessionId: string, to: 'remote' | 'local'): Promise<void> {
@@ -434,9 +659,10 @@ export class SyncEngine {
         sessionId: string,
         config: {
             permissionMode?: PermissionMode
-            model?: string | null
+            model?: { provider: string; modelId: string } | string | null
             modelReasoningEffort?: string | null
             effort?: string | null
+            serviceTier?: string | null
             collaborationMode?: CodexCollaborationMode
         }
     ): Promise<void> {
@@ -449,22 +675,27 @@ export class SyncEngine {
             return
         }
 
-        const result = await this.rpcGateway.requestSessionConfig(sessionId, config)
+        const result = await this.rpcGateway.requestSessionConfig(sessionId, config) as Record<string, unknown>
         if (!result || typeof result !== 'object') {
             throw new Error('Invalid response from session config RPC')
         }
         const obj = result as {
+            error?: string
             applied?: {
                 permissionMode?: Session['permissionMode']
                 model?: Session['model']
                 modelReasoningEffort?: Session['modelReasoningEffort']
                 effort?: Session['effort']
+                serviceTier?: Session['serviceTier']
                 collaborationMode?: Session['collaborationMode']
             }
         }
+        if (typeof obj.error === 'string' && obj.error.trim().length > 0) {
+            throw new Error(obj.error)
+        }
         const applied = obj.applied
         if (!applied || typeof applied !== 'object') {
-            throw new Error('Missing applied session config')
+            throw new Error(`Missing applied session config, got: ${JSON.stringify(result)}`)
         }
 
         const requestedKeys = Object.keys(config) as Array<keyof typeof config>
@@ -488,7 +719,8 @@ export class SyncEngine {
         worktreeName?: string,
         resumeSessionId?: string,
         effort?: string,
-        permissionMode?: PermissionMode
+        permissionMode?: PermissionMode,
+        serviceTier?: string
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         return await this.rpcGateway.spawnSession(
             machineId,
@@ -501,7 +733,8 @@ export class SyncEngine {
             worktreeName,
             resumeSessionId,
             effort,
-            permissionMode
+            permissionMode,
+            serviceTier
         )
     }
 
@@ -522,6 +755,7 @@ export class SyncEngine {
         if (flavor === 'opencode') return metadata.opencodeSessionId ?? null
         if (flavor === 'cursor') return metadata.cursorSessionId ?? null
         if (flavor === 'kimi') return metadata.kimiSessionId ?? null
+        if (flavor === 'pi') return metadata.piSessionId ?? null
 
         return metadata.claudeSessionId ?? this.recoverClaudeSessionIdFromMessages(session.id, namespace)
     }
@@ -617,6 +851,250 @@ export class SyncEngine {
         return undefined
     }
 
+    /**
+     * tiann/hapi#824 — sync-on-open auto-migration. Returns the (possibly
+     * refreshed-from-cache) session. If the session is a legacy stream-json
+     * Cursor session AND the env flag is on, attempts a transplant migration
+     * synchronously before the caller spawns the runner.
+     *
+     * The migrator's verify probe runs in an isolated HAPI_HOME (see
+     * verifyInTempHome), so this method is safe to call even when other ACP
+     * transports are alive on the host: per tiann/hapi#832, two `agent acp`
+     * processes coexist on the same host without conflict, and swear01's
+     * tiann/hapi#835 refactors the agent-acp-active lock into a cross-process
+     * refcount that explicitly supports this. We rely on #835 landing before
+     * this PR — see manifest layer ordering and the dependency note in
+     * PR #34's body.
+     *
+     * Failure modes are all soft — the session is returned unchanged and the
+     * caller proceeds with the legacy launcher.
+     */
+    private async maybeAutoMigrateLegacyCursorSession(session: Session, namespace: string): Promise<Session> {
+        const md = session.metadata
+        const flagRaw = process.env.HAPI_CURSOR_LEGACY_AUTO_MIGRATE?.trim().toLowerCase() ?? ''
+        console.info('[auto-migrate] considering', {
+            sessionId: session.id,
+            flavor: md?.flavor ?? null,
+            proto: md?.cursorSessionProtocol ?? null,
+            hasCursorId: typeof md?.cursorSessionId === 'string' && md.cursorSessionId.length > 0,
+            envFlag: flagRaw === '' ? '(unset; default on)' : flagRaw
+        })
+
+        if (flagRaw === '0' || flagRaw === 'false' || flagRaw === 'no' || flagRaw === 'off') {
+            console.info('[auto-migrate] skipped: env flag disabled', { sessionId: session.id })
+            return session
+        }
+        if (!md || md.flavor !== 'cursor') {
+            console.info('[auto-migrate] skipped: not a cursor session', { sessionId: session.id, flavor: md?.flavor ?? null })
+            return session
+        }
+        if (md.cursorSessionProtocol === 'acp') {
+            console.info('[auto-migrate] skipped: already ACP', { sessionId: session.id })
+            return session
+        }
+        if (typeof md.cursorSessionId !== 'string' || md.cursorSessionId.length === 0) {
+            console.info('[auto-migrate] skipped: no cursorSessionId', { sessionId: session.id })
+            return session
+        }
+
+        console.info('[auto-migrate] starting transplant', { sessionId: session.id, cursorSessionId: md.cursorSessionId })
+        // UX A++: surface the migration to the user via a banner in the
+        // web UI. We set `cursorMigrationState='in_progress'` on the row
+        // BEFORE the long-running transplant; the sessionCache.refresh()
+        // call emits a `session-updated` SSE event the web client uses to
+        // render the banner. The flag is cleared on success by the same
+        // metadata write that flips cursorSessionProtocol to 'acp' (see
+        // flipCursorSessionProtocolToAcp) so the banner disappears in the
+        // same render tick the chat re-renders as ACP — no flicker. On
+        // failure we clear the flag explicitly in the catch path below.
+        const flagSet = this.setCursorMigrationStateInProgress(session.id, namespace)
+        let bannerCleanupNeeded = flagSet
+        try {
+            const migrator = this.buildMigratorForRequest({})
+            // Codex #34 P2 (round 13): for inactive rows whose metadata
+            // still reads `lifecycleState === 'running'` (e.g. orphaned by
+            // a hub crash where the lifecycle transition didn't land), the
+            // migrator's preflight refuses with `running_refused` unless
+            // `forceArchiveRunning` is true. resumeSession's caller-side
+            // guard already ensured `session.active === false` (see the
+            // early-return above), so we know there's no runner to yank;
+            // the `running` lifecycle is stale metadata, not a live agent.
+            // This is exactly the stale-row case the sync-on-open path is
+            // meant to clean up — refusing here would defeat the whole
+            // point and silently fall back to the legacy launcher forever.
+            const outcome = await migrator.migrateOne(session, { forceArchiveRunning: true })
+            if (outcome.ok) {
+                console.info('[auto-migrate] success', {
+                    sessionId: session.id,
+                    cursorSessionId: md.cursorSessionId,
+                    acpSessionId: outcome.acpSessionId,
+                    durationMs: outcome.durationMs,
+                    sourceRemoved: outcome.sourceRemoved,
+                    replayNotifications: outcome.replayNotifications,
+                    lastUsedModelPreserved: outcome.lastUsedModelPreserved
+                })
+                // Successful migration already cleared the flag atomically
+                // in flipCursorSessionProtocolToAcp; skip the cleanup write.
+                bannerCleanupNeeded = false
+                const refreshed = this.sessionCache.getSessionByNamespace(session.id, namespace)
+                if (refreshed) return refreshed
+                return session
+            }
+            // tiann/hapi#872: ambiguous source store OR size-mismatch
+            // means the migrator refused to transplant likely-alien
+            // content. Surface this to the UI banner instead of silently
+            // clearing the in-progress flag, so the operator can act
+            // (verify which workspace-hash drawer holds the real history,
+            // delete the stale siblings, retry) rather than have us
+            // silently fall back to the legacy launcher and pretend the
+            // ambiguity never happened.
+            if (outcome.reason === 'ambiguous_legacy_store' || outcome.reason === 'size_mismatch') {
+                console.warn('[auto-migrate] refusing to transplant; surfacing ambiguous banner', {
+                    sessionId: session.id,
+                    reason: outcome.reason,
+                    message: outcome.message
+                })
+                const promoted = this.setCursorMigrationStateAmbiguous(session.id, namespace)
+                if (promoted) {
+                    // We replaced the in-progress flag with the
+                    // ambiguous flag; the cleanup write below would
+                    // wipe both, so suppress it.
+                    bannerCleanupNeeded = false
+                } else {
+                    // Promotion to 'ambiguous' failed (cache miss, repeated
+                    // version-mismatch, or non-version write failure). The
+                    // operator-facing warning above already fired; the
+                    // finally{} block will fall through to clear the
+                    // in-progress flag so the user is not left with a
+                    // permanent "Upgrading..." banner. Log so the gap is
+                    // diagnosable from journalctl. tiann/hapi#872.
+                    console.warn('[auto-migrate] failed to promote cursorMigrationState to "ambiguous"; banner will clear via cleanup', {
+                        sessionId: session.id,
+                        reason: outcome.reason
+                    })
+                }
+                return session
+            }
+            // Soft fail — log and let the legacy launcher handle it.
+            console.info('[auto-migrate] legacy cursor session left as stream-json', {
+                sessionId: session.id,
+                reason: outcome.reason,
+                message: outcome.message
+            })
+        } catch (err) {
+            console.warn('[auto-migrate] unexpected error; falling back to legacy launcher', {
+                sessionId: session.id,
+                err: err instanceof Error ? err.message : String(err)
+            })
+        } finally {
+            // Failure or exception path: clear the in-progress banner flag
+            // so the user isn't left with a permanent "Upgrading..." banner
+            // even though we silently fell back to the legacy launcher.
+            if (bannerCleanupNeeded) {
+                this.clearCursorMigrationState(session.id, namespace)
+            }
+        }
+        return session
+    }
+
+    /**
+     * Replace `cursorMigrationState='in_progress'` with `'ambiguous'` so
+     * the web banner can switch from "Upgrading..." to "Manual resolution
+     * needed". Returns true if the new flag persisted. tiann/hapi#872.
+     */
+    private setCursorMigrationStateAmbiguous(sessionId: string, namespace: string): boolean {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            const latest = this.sessionCache.getSessionByNamespace(sessionId, namespace)
+                ?? this.sessionCache.refreshSession(sessionId)
+            if (!latest?.metadata) return false
+            if (latest.metadata.cursorMigrationState === 'ambiguous') return true
+            const nextMetadata = { ...latest.metadata, cursorMigrationState: 'ambiguous' as const }
+            const result = this.store.sessions.updateSessionMetadata(
+                sessionId,
+                nextMetadata,
+                latest.metadataVersion,
+                namespace,
+                { touchUpdatedAt: false }
+            )
+            if (result.result === 'success') {
+                this.sessionCache.refreshSession(sessionId)
+                return true
+            }
+            if (result.result === 'version-mismatch') {
+                this.sessionCache.refreshSession(sessionId)
+                continue
+            }
+            return false
+        }
+        return false
+    }
+
+    /**
+     * Set `metadata.cursorMigrationState='in_progress'` on the session row
+     * with a single retry on version-mismatch. Returns true if the flag was
+     * persisted (so the caller knows the finally-cleanup is required), false
+     * if the write failed entirely — in which case the banner never appeared
+     * and there's nothing to clean up. UX A++ helper for the auto-migrate
+     * banner; see maybeAutoMigrateLegacyCursorSession.
+     */
+    private setCursorMigrationStateInProgress(sessionId: string, namespace: string): boolean {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            const latest = this.sessionCache.getSessionByNamespace(sessionId, namespace)
+                ?? this.sessionCache.refreshSession(sessionId)
+            if (!latest?.metadata) return false
+            if (latest.metadata.cursorMigrationState === 'in_progress') return true
+            const nextMetadata = { ...latest.metadata, cursorMigrationState: 'in_progress' as const }
+            const result = this.store.sessions.updateSessionMetadata(
+                sessionId,
+                nextMetadata,
+                latest.metadataVersion,
+                namespace,
+                { touchUpdatedAt: false }
+            )
+            if (result.result === 'success') {
+                this.sessionCache.refreshSession(sessionId)
+                return true
+            }
+            if (result.result === 'version-mismatch') {
+                this.sessionCache.refreshSession(sessionId)
+                continue
+            }
+            return false
+        }
+        return false
+    }
+
+    /**
+     * Clear `metadata.cursorMigrationState` (failure / exception cleanup).
+     * Idempotent; safe to call when the flag was never set. UX A++ helper.
+     */
+    private clearCursorMigrationState(sessionId: string, namespace: string): void {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            const latest = this.sessionCache.getSessionByNamespace(sessionId, namespace)
+                ?? this.sessionCache.refreshSession(sessionId)
+            if (!latest?.metadata) return
+            if (latest.metadata.cursorMigrationState === undefined) return
+            const nextMetadata: typeof latest.metadata = { ...latest.metadata }
+            delete nextMetadata.cursorMigrationState
+            const result = this.store.sessions.updateSessionMetadata(
+                sessionId,
+                nextMetadata,
+                latest.metadataVersion,
+                namespace,
+                { touchUpdatedAt: false }
+            )
+            if (result.result === 'success') {
+                this.sessionCache.refreshSession(sessionId)
+                return
+            }
+            if (result.result === 'version-mismatch') {
+                this.sessionCache.refreshSession(sessionId)
+                continue
+            }
+            return
+        }
+    }
+
     /** Inactive session with directory path but no agent thread and no prior user turn. */
     private canFreshSpawnNeverStartedSession(session: Session, sessionId: string, namespace: string): boolean {
         const metadata = session.metadata
@@ -639,10 +1117,18 @@ export class SyncEngine {
             }
         }
 
-        const session = access.session
-        if (session.active) {
+        const initialSession = access.session
+        if (initialSession.active) {
             return { type: 'success', sessionId: access.sessionId }
         }
+
+        // tiann/hapi#824 — invisible, automatic, per-session ACP migration on
+        // first open. If this is a legacy stream-json Cursor session and we
+        // can safely migrate it right now (no other agent acp transport
+        // would block the post-migration ACP launcher), run the transplant
+        // synchronously before resuming. The user sees the regular session
+        // loading state for ~3–5s longer; the session opens as ACP.
+        const session = await this.maybeAutoMigrateLegacyCursorSession(initialSession, namespace)
 
         const targetResult = this.resolveLocalResumeTarget(access.sessionId, namespace)
         let flavor: AgentFlavor
@@ -702,7 +1188,8 @@ export class SyncEngine {
             undefined,
             resumeToken,
             session.effort ?? undefined,
-            preferredPermissionMode
+            preferredPermissionMode,
+            session.serviceTier ?? undefined
         )
 
         if (spawnResult.type !== 'success') {
@@ -716,6 +1203,19 @@ export class SyncEngine {
 
         // permissionMode is passed to spawnSession above; do not call set-session-config here.
         // session-alive can arrive before the CLI registers that RPC handler, which caused resume_failed.
+
+        const needsReadyBeforeMerge = spawnResult.sessionId !== access.sessionId
+            && flavor === 'cursor'
+            && metadata.cursorSessionProtocol === 'acp'
+        if (needsReadyBeforeMerge) {
+            const readyResult = await this.waitForSessionReady(spawnResult.sessionId)
+            if (readyResult !== 'ready') {
+                const message = readyResult === 'ended'
+                    ? 'Session ended before Cursor ACP load completed'
+                    : 'Session failed to become ready'
+                return { type: 'error', message, code: 'resume_failed' }
+            }
+        }
 
         if (spawnResult.sessionId !== access.sessionId) {
             // The old session may have already been merged by the automatic dedup path
@@ -733,6 +1233,106 @@ export class SyncEngine {
         }
 
         return { type: 'success', sessionId: spawnResult.sessionId }
+    }
+
+    /**
+     * Revive an archived session so the web UI can reach it again.
+     *
+     * Behaviour:
+     * - Active session: idempotent no-op (`resumed: false`).
+     * - Non-archived inactive session: forwards to `resumeSession` without touching metadata.
+     * - Archived session: validates that the agent has enough metadata to resume (Cursor
+     *   sessions require a `cursorSessionId` once they have any messages), clears the
+     *   archive metadata (`lifecycleState`, `archivedBy`, `archiveReason`), defaults the
+     *   Cursor protocol to `stream-json` for pre-#799 sessions, then forwards to
+     *   `resumeSession`. The CLI's `sessionFactory` will re-stamp `lifecycleState='running'`
+     *   when it boots, so we do not pre-write that here.
+     *
+     * Failure rollback: if `resumeSession` fails (no machine online, spawn timeout, etc.)
+     * the archive snapshot is restored so the operator can retry without losing
+     * `archiveReason`/`archivedBy`/`lifecycleState` and the UI still shows the row as
+     * archived rather than a dangling inactive non-archived ghost.
+     *
+     * Returns `incomplete` (HTTP 422 from the route layer) when the agent metadata
+     * needed to resume is missing.
+     */
+    async reopenSession(sessionId: string, namespace: string): Promise<ReopenSessionResult> {
+        const access = this.sessionCache.resolveSessionAccess(sessionId, namespace)
+        if (!access.ok) {
+            return {
+                type: 'error',
+                message: access.reason === 'access-denied' ? 'Session access denied' : 'Session not found',
+                code: access.reason === 'access-denied' ? 'access_denied' : 'session_not_found'
+            }
+        }
+
+        const session = access.session
+        const metadata = session.metadata
+
+        if (session.active) {
+            return { type: 'success', sessionId: access.sessionId, resumed: false }
+        }
+
+        const isArchived = metadata?.lifecycleState === 'archived'
+
+        if (isArchived && metadata) {
+            if (metadata.flavor === 'cursor' && !metadata.cursorSessionId) {
+                const hasMessages = this.store.messages.getFirstMessages(access.sessionId, 1).length > 0
+                if (hasMessages) {
+                    return {
+                        type: 'incomplete',
+                        message: 'Cursor session id is missing from metadata; reopen requires the original cursor chat id',
+                        missing: ['cursorSessionId']
+                    }
+                }
+            }
+
+            const archiveSnapshot = {
+                lifecycleState: metadata.lifecycleState,
+                archivedBy: metadata.archivedBy,
+                archiveReason: metadata.archiveReason,
+                lifecycleStateSince: metadata.lifecycleStateSince
+            }
+
+            let applied: { cursorSessionProtocol?: 'acp' | 'stream-json' }
+            try {
+                applied = await this.sessionCache.clearSessionArchiveMetadata(access.sessionId)
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Failed to clear archive metadata'
+                return { type: 'error', message, code: 'metadata_conflict' }
+            }
+
+            const resumeResult = await this.resumeSession(access.sessionId, namespace)
+            if (resumeResult.type === 'error') {
+                // Resume failed - put the archive flags back so the row stays archived in the UI
+                // and the operator can retry. Best-effort: a concurrent metadata write that
+                // succeeded between clear and restore (e.g. an unrelated rename) wins, in
+                // which case we surface the original resume error rather than masking it.
+                try {
+                    await this.sessionCache.restoreSessionArchiveMetadata(access.sessionId, archiveSnapshot)
+                } catch {
+                    // Swallow restore failures - the resume error is the more important signal.
+                }
+                return resumeResult
+            }
+
+            return {
+                type: 'success',
+                sessionId: resumeResult.sessionId,
+                resumed: true,
+                ...(applied.cursorSessionProtocol ? { cursorSessionProtocol: applied.cursorSessionProtocol } : {})
+            }
+        }
+
+        // Not active and not archived (e.g. brand-new session that has not yet connected,
+        // or one that ended without writing archive metadata). Forward to resume so the
+        // operator still gets one-click revival.
+        const resumeResult = await this.resumeSession(access.sessionId, namespace)
+        if (resumeResult.type === 'error') {
+            return resumeResult
+        }
+
+        return { type: 'success', sessionId: resumeResult.sessionId, resumed: true }
     }
 
     async handoffSessionToLocal(sessionId: string, namespace: string): Promise<LocalHandoffResult> {
@@ -860,11 +1460,26 @@ export class SyncEngine {
             && (prev?.geminiSessionId ?? null) === (next.geminiSessionId ?? null)
             && (prev?.opencodeSessionId ?? null) === (next.opencodeSessionId ?? null)
             && (prev?.cursorSessionId ?? null) === (next.cursorSessionId ?? null)
+            && (prev?.piSessionId ?? null) === (next.piSessionId ?? null)
+            && (prev?.kimiSessionId ?? null) === (next.kimiSessionId ?? null)
+    }
+
+    private canRunCursorDedup(session: Session): boolean {
+        if (session.metadata?.flavor !== 'cursor') {
+            return true
+        }
+        if (session.metadata?.cursorSessionProtocol !== 'acp') {
+            return true
+        }
+        return this.sessionReadyIds.has(session.id)
     }
 
     private triggerDedupIfNeeded(sessionId: string): void {
         const session = this.sessionCache.getSession(sessionId)
         if (session?.metadata) {
+            if (!this.canRunCursorDedup(session)) {
+                return
+            }
             void this.sessionCache.deduplicateByAgentSessionId(sessionId).catch(() => {
                 // best-effort: web-side safety net hides remaining duplicates
             })
@@ -881,6 +1496,21 @@ export class SyncEngine {
             await new Promise((resolve) => setTimeout(resolve, 250))
         }
         return false
+    }
+
+    async waitForSessionReady(sessionId: string, timeoutMs: number = 60_000): Promise<'ready' | 'ended' | 'timeout'> {
+        const start = Date.now()
+        while (Date.now() - start < timeoutMs) {
+            if (this.sessionReadyIds.has(sessionId)) {
+                return 'ready'
+            }
+            const session = this.getSession(sessionId)
+            if (!session?.active) {
+                return 'ended'
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250))
+        }
+        return 'timeout'
     }
 
     async waitForSessionInactive(sessionId: string, timeoutMs: number = 15_000): Promise<boolean> {
@@ -973,5 +1603,14 @@ export class SyncEngine {
 
     async listOpencodeModelsForCwd(machineId: string, cwd: string): Promise<RpcListOpencodeModelsResponse> {
         return await this.rpcGateway.listOpencodeModelsForCwd(machineId, cwd)
+    }
+
+    /** Generic Pi RPC — delegates to rpcGateway.callPiRpc. */
+    async callPiRpc<T = unknown>(sessionId: string, method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<T> {
+        return await this.rpcGateway.callPiRpc<T>(sessionId, method, params, timeoutMs)
+    }
+
+    async listOpencodeReasoningEffortOptionsForSession(sessionId: string): Promise<RpcListOpencodeReasoningEffortOptionsResponse> {
+        return await this.rpcGateway.listOpencodeReasoningEffortOptionsForSession(sessionId)
     }
 }

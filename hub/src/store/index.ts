@@ -23,7 +23,7 @@ export { PushStore } from './pushStore'
 export { SessionStore } from './sessionStore'
 export { UserStore } from './userStore'
 
-const SCHEMA_VERSION: number = 9
+const SCHEMA_VERSION: number = 10
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -34,7 +34,7 @@ const REQUIRED_TABLES = [
 
 export class Store {
     private db: Database
-    private readonly dbPath: string
+    private readonly _dbPath: string
     private closed: boolean = false
 
     readonly sessions: SessionStore
@@ -43,8 +43,17 @@ export class Store {
     readonly users: UserStore
     readonly push: PushStore
 
+    /**
+     * Filesystem path of the underlying SQLite database, or ':memory:' for
+     * in-memory stores. Used by the legacy → ACP migrator (#824) to take a
+     * backup before a bulk run; treat as read-only.
+     */
+    get dbPath(): string {
+        return this._dbPath
+    }
+
     constructor(dbPath: string) {
-        this.dbPath = dbPath
+        this._dbPath = dbPath
         if (dbPath !== ':memory:' && !dbPath.startsWith('file::memory:')) {
             const dir = dirname(dbPath)
             mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -114,6 +123,7 @@ export class Store {
             6: () => this.migrateFromV6ToV7(),
             7: () => this.migrateFromV7ToV8(),
             8: () => this.migrateFromV8ToV9(),
+            9: () => this.migrateFromV9ToV10(),
         })
 
         if (currentVersion === 0) {
@@ -175,6 +185,7 @@ export class Store {
                 model TEXT,
                 model_reasoning_effort TEXT,
                 effort TEXT,
+                service_tier TEXT,
                 todos TEXT,
                 todos_updated_at INTEGER,
                 team_state TEXT,
@@ -416,6 +427,14 @@ export class Store {
         `)
     }
 
+    private migrateFromV9ToV10(): void {
+        const columns = this.getSessionColumnNames()
+        if (columns.size === 0) return
+        if (!columns.has('service_tier')) {
+            this.db.exec('ALTER TABLE sessions ADD COLUMN service_tier TEXT')
+        }
+    }
+
     private getSessionColumnNames(): Set<string> {
         const rows = this.db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>
         return new Set(rows.map((row) => row.name))
@@ -464,9 +483,9 @@ export class Store {
     }
 
     private buildSchemaMismatchError(currentVersion: number): Error {
-        const location = (this.dbPath === ':memory:' || this.dbPath.startsWith('file::memory:'))
+        const location = (this._dbPath === ':memory:' || this._dbPath.startsWith('file::memory:'))
             ? 'in-memory database'
-            : this.dbPath
+            : this._dbPath
         return new Error(
             `SQLite schema version mismatch for ${location}. ` +
             `Expected ${SCHEMA_VERSION}, found ${currentVersion}. ` +

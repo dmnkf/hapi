@@ -56,7 +56,7 @@ hapi --version   # should print 0.17.2-dmnkf.13 or later
 ### If you installed via npm
 
 ```bash
-npm uninstall -g @twsxtd/hapi
+npm uninstall -g hapi
 npm install -g @dmnkf/hapi
 ```
 
@@ -129,4 +129,4 @@ bun run build:single-exe
 
 ## Credits
 
-HAPI means "哈皮" a Chinese transliteration of [Happy](https://github.com/slopus/happy). Great credit to the original project and to [tiann/hapi](https://github.com/tiann/hapi) (the upstream this fork is based on).
+Great credit to [Happy](https://github.com/slopus/happy), the original project this work descends from, and to [tiann/hapi](https://github.com/tiann/hapi), the upstream this fork is based on.

@@ -1,7 +1,6 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 
-// 特效单词列表 - 可以轻松扩展
 const RAINBOW_WORDS = [
     'ultrathink',
     'fuck',
@@ -11,30 +10,17 @@ const RAINBOW_WORDS = [
     'impl it',
     'pls fix',
     'stop changing',
-    '用中文',
-    '我说了',
-    '别又',
-    '为什么又',
-    '根本不',
-    '还是报错',
-    '大哥',
-    '求你',
-    '就改这里',
-    '弱智',
 ]
 
-// 转义正则特殊字符
 function escapeRegExp(str: string): string {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// 动态构建正则表达式
 function buildPattern(words: string[]): RegExp {
     const pattern = words.map(escapeRegExp).join('|')
     return new RegExp(`(${pattern})`, 'gi')
 }
 
-// 快速检查是否包含任何特效单词
 function hasAnySpecialWord(text: string, words: string[]): boolean {
     const lowerText = text.toLowerCase()
     return words.some(word => lowerText.includes(word.toLowerCase()))
@@ -102,7 +88,7 @@ function processChildrenForRainbow(children: React.ReactNode): React.ReactNode {
     })
 }
 
-export function LazyRainbowText(props: { text: string; inline?: boolean }) {
+export function LazyRainbowText(props: { text: string; inline?: boolean; preserveSingleLineBreaks?: boolean }) {
     const text = props.text
     const ref = useRef<HTMLElement>(null)
     const [hasBeenVisible, setHasBeenVisible] = useState(false)
@@ -148,6 +134,7 @@ export function LazyRainbowText(props: { text: string; inline?: boolean }) {
         <MarkdownRenderer
             content={text}
             className={props.inline ? 'inline' : undefined}
+            preserveSingleLineBreaks={props.preserveSingleLineBreaks}
             components={
                 hasSpecialWord && hasBeenVisible
                     ? rainbowComponents

@@ -2,13 +2,17 @@ import { logger } from '@/ui/logger';
 import { cursorLocal } from './cursorLocal';
 import { CursorSession } from './session';
 import { BaseLocalLauncher } from '@/modules/common/launcher/BaseLocalLauncher';
+import { convertAgentMessage } from '@/agent/messageConverter';
 
-function permissionModeToCursorArgs(mode?: string): { mode?: 'plan' | 'ask'; yolo?: boolean } {
+function permissionModeToCursorArgs(mode?: string): { mode?: 'plan' | 'ask' | 'debug'; yolo?: boolean } {
     if (mode === 'plan') {
         return { mode: 'plan' };
     }
     if (mode === 'ask') {
         return { mode: 'ask' };
+    }
+    if (mode === 'debug') {
+        return { mode: 'debug' };
     }
     if (mode === 'yolo') {
         return { yolo: true };
@@ -43,7 +47,10 @@ export async function cursorLocalLauncher(session: CursorSession): Promise<'swit
             });
         },
         sendFailureMessage: (message) => {
-            session.sendSessionEvent({ type: 'message', message });
+            const converted = convertAgentMessage({ type: 'error', message });
+            if (converted) {
+                session.sendAgentMessage(converted);
+            }
         },
         recordLocalLaunchFailure: (message, exitReason) => {
             session.recordLocalLaunchFailure(message, exitReason);

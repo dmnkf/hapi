@@ -4,8 +4,10 @@ import type { ApiClient } from '@/api/client'
 import { isTelegramApp } from '@/hooks/useTelegram'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
+import { SessionExportDialog } from '@/components/SessionExportDialog'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { formatReopenError } from '@/lib/reopenError'
 import { getSessionModelLabel } from '@/lib/sessionModelLabel'
 import { useTranslation } from '@/lib/use-translation'
 import { AgentFlavorIcon } from '@/components/AgentFlavorIcon'
@@ -68,6 +70,14 @@ function OutlineIcon(props: { className?: string }) {
     )
 }
 
+function headerToggleClass(active: boolean): string {
+    return `flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+        active
+            ? 'bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90'
+            : 'text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]'
+    }`
+}
+
 function MoreVerticalIcon(props: { className?: string }) {
     return (
         <svg
@@ -88,13 +98,16 @@ function MoreVerticalIcon(props: { className?: string }) {
 export function SessionHeader(props: {
     session: Session
     onBack: () => void
-    onViewFiles?: () => void
-    onOpenOutline?: () => void
+    onToggleFiles?: () => void
+    filesActive?: boolean
+    onToggleOutline?: () => void
+    outlineActive?: boolean
     api: ApiClient | null
     onSessionDeleted?: () => void
+    onSessionReopened?: (newSessionId: string) => void
 }) {
     const { t } = useTranslation()
-    const { session, api, onSessionDeleted } = props
+    const { session, api, onSessionDeleted, onSessionReopened } = props
     const title = useMemo(() => getSessionTitle(session), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
     const modelLabel = getSessionModelLabel(session)
@@ -104,18 +117,32 @@ export function SessionHeader(props: {
     const menuId = useId()
     const menuAnchorRef = useRef<HTMLButtonElement | null>(null)
     const [renameOpen, setRenameOpen] = useState(false)
+    const [exportOpen, setExportOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
     const [deleteOpen, setDeleteOpen] = useState(false)
 
-    const { archiveSession, renameSession, deleteSession, isPending } = useSessionActions(
+    const { archiveSession, reopenSession, renameSession, deleteSession, isPending } = useSessionActions(
         api,
         session.id,
         session.metadata?.flavor ?? null
     )
+    const [reopenError, setReopenError] = useState<string | null>(null)
 
     const handleDelete = async () => {
         await deleteSession()
         onSessionDeleted?.()
+    }
+
+    const handleReopen = async () => {
+        setReopenError(null)
+        try {
+            const result = await reopenSession()
+            if (result.sessionId && result.sessionId !== session.id) {
+                onSessionReopened?.(result.sessionId)
+            }
+        } catch (error) {
+            setReopenError(formatReopenError(error))
+        }
     }
 
     const handleMenuToggle = () => {
@@ -177,24 +204,27 @@ export function SessionHeader(props: {
                         </div>
                     </div>
 
-                    {props.onViewFiles ? (
+                    {props.onToggleFiles ? (
                         <button
                             type="button"
-                            onClick={props.onViewFiles}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                            title={t('session.title')}
+                            onClick={props.onToggleFiles}
+                            className={headerToggleClass(props.filesActive ?? false)}
+                            title={props.filesActive ? t('session.view.returnToChat') : t('session.title')}
+                            aria-label={props.filesActive ? t('session.view.returnToChat') : t('session.title')}
+                            aria-pressed={props.filesActive ?? false}
                         >
                             <FilesIcon />
                         </button>
                     ) : null}
 
-                    {props.onOpenOutline ? (
+                    {props.onToggleOutline ? (
                         <button
                             type="button"
-                            onClick={props.onOpenOutline}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                            title={t('session.outline.open')}
-                            aria-label={t('session.outline.open')}
+                            onClick={props.onToggleOutline}
+                            className={headerToggleClass(props.outlineActive ?? false)}
+                            title={props.outlineActive ? t('session.outline.close') : t('session.outline.open')}
+                            aria-label={props.outlineActive ? t('session.outline.close') : t('session.outline.open')}
+                            aria-pressed={props.outlineActive ?? false}
                         >
                             <OutlineIcon />
                         </button>
@@ -221,11 +251,26 @@ export function SessionHeader(props: {
                 onClose={() => setMenuOpen(false)}
                 sessionActive={session.active}
                 onRename={() => setRenameOpen(true)}
+                onExport={() => setExportOpen(true)}
                 onArchive={() => setArchiveOpen(true)}
+                onReopen={handleReopen}
                 onDelete={() => setDeleteOpen(true)}
                 anchorPoint={menuAnchorPoint}
                 menuId={menuId}
             />
+
+            {reopenError ? (
+                <ConfirmDialog
+                    isOpen={true}
+                    onClose={() => setReopenError(null)}
+                    title={t('dialog.reopen.errorTitle')}
+                    description={reopenError}
+                    confirmLabel={t('dialog.reopen.dismiss')}
+                    confirmingLabel={t('dialog.reopen.dismiss')}
+                    onConfirm={async () => setReopenError(null)}
+                    isPending={false}
+                />
+            ) : null}
 
             <RenameSessionDialog
                 isOpen={renameOpen}
@@ -233,6 +278,13 @@ export function SessionHeader(props: {
                 currentName={title}
                 onRename={renameSession}
                 isPending={isPending}
+            />
+
+            <SessionExportDialog
+                isOpen={exportOpen}
+                onClose={() => setExportOpen(false)}
+                session={session}
+                api={api}
             />
 
             <ConfirmDialog

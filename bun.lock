@@ -5,15 +5,16 @@
     "": {
       "name": "hapi",
       "devDependencies": {
+        "@playwright/test": "^1.60.0",
         "concurrently": "^9.2.1",
-        "playwright": "1.49.1",
+        "playwright": "1.60.0",
         "react-devtools-core": "^7.0.1",
         "vite-plugin-pwa": "^1.2.0",
       },
     },
     "cli": {
       "name": "@dmnkf/hapi",
-      "version": "0.19.0-dmnkf.1",
+      "version": "0.20.2-dmnkf.1",
       "bin": {
         "hapi": "bin/hapi.cjs",
       },
@@ -45,11 +46,11 @@
         "vitest": "^4.0.16",
       },
       "optionalDependencies": {
-        "@dmnkf/hapi-darwin-arm64": "0.19.0-dmnkf.1",
-        "@dmnkf/hapi-darwin-x64": "0.19.0-dmnkf.1",
-        "@dmnkf/hapi-linux-arm64": "0.19.0-dmnkf.1",
-        "@dmnkf/hapi-linux-x64": "0.19.0-dmnkf.1",
-        "@dmnkf/hapi-win32-x64": "0.19.0-dmnkf.1",
+        "@dmnkf/hapi-darwin-arm64": "0.20.2-dmnkf.1",
+        "@dmnkf/hapi-darwin-x64": "0.20.2-dmnkf.1",
+        "@dmnkf/hapi-linux-arm64": "0.20.2-dmnkf.1",
+        "@dmnkf/hapi-linux-x64": "0.20.2-dmnkf.1",
+        "@dmnkf/hapi-win32-x64": "0.20.2-dmnkf.1",
       },
     },
     "docs": {
@@ -118,6 +119,7 @@
         "react": "^19.2.3",
         "react-dom": "^19.2.3",
         "rehype-katex": "^7.0.1",
+        "remark-breaks": "^4.0.0",
         "remark-gfm": "^4.0.1",
         "remark-math": "^6.0.0",
         "shiki": "^3.20.0",
@@ -137,10 +139,14 @@
         "@types/react-dom": "^19.2.3",
         "@vitejs/plugin-react": "^5.1.2",
         "autoprefixer": "^10.4.23",
+        "hast-util-to-html": "^9.0.5",
         "jsdom": "^26.1.0",
         "postcss": "^8.5.6",
+        "remark-parse": "^11.0.0",
+        "remark-rehype": "^11.1.2",
         "tailwindcss": "^4.1.18",
         "typescript": "^5.9.3",
+        "unified": "^11.0.5",
         "vite": "^7.3.0",
         "vitest": "^4.0.16",
       },
@@ -715,6 +721,8 @@
     "@pierre/theme": ["@pierre/theme@0.0.28", "", {}, "sha512-1j/H/fECBuc9dEvntdWI+l435HZapw+RCJTlqCA6BboQ5TjlnE005j/ROWutXIs8aq5OAc82JI2Kwk4A1WWBgw=="],
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
+
+    "@playwright/test": ["@playwright/test@1.60.0", "", { "dependencies": { "playwright": "1.60.0" }, "bin": { "playwright": "cli.js" } }, "sha512-O71yZIbAh/PxDMNGns37GHBIfrVkEVyn+AXyIa5dOTfb4/xNvRWV+Vv/NMbNCtODB/pO7vLlF2OTmMVLhmr7Ag=="],
 
     "@primer/octicons": ["@primer/octicons@19.23.1", "", { "dependencies": { "object-assign": "^4.1.1" } }, "sha512-CzjGmxkmNhyst6EekrS3SJPdtzgIkUMP/LSJch65y99/kmiFXbO1a+q7zoYe3hnI9NaOM0IN+ydDIbOmd8YqcA=="],
 
@@ -2422,9 +2430,9 @@
 
     "pkg-types": ["pkg-types@1.3.1", "", { "dependencies": { "confbox": "^0.1.8", "mlly": "^1.7.4", "pathe": "^2.0.1" } }, "sha512-/Jm5M4RvtBFVkKWRu2BLUTNP8/M2a+UwuAX+ae4770q1qVGtfjG+WTCupoZixokjmHiry8uI+dlY8KXYV5HVVQ=="],
 
-    "playwright": ["playwright@1.49.1", "", { "dependencies": { "playwright-core": "1.49.1" }, "optionalDependencies": { "fsevents": "2.3.2" }, "bin": { "playwright": "cli.js" } }, "sha512-VYL8zLoNTBxVOrJBbDuRgDWa3i+mfQgDTrL8Ah9QXZ7ax4Dsj0MSq5bYgytRnDVVe+njoKnfsYkH3HzqVj5UZA=="],
+    "playwright": ["playwright@1.60.0", "", { "dependencies": { "playwright-core": "1.60.0" }, "optionalDependencies": { "fsevents": "2.3.2" }, "bin": { "playwright": "cli.js" } }, "sha512-hheHdokM8cdqCb0lcE3s+zT4t4W+vvjpGxsZlDnikarzx8tSzMebh3UiFtgqwFwnTnjYQcsyMF8ei2mCO/tpeA=="],
 
-    "playwright-core": ["playwright-core@1.49.1", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-BzmpVcs4kE2CH15rWfzpjzVGhWERJfmnXmniSyKeRZUs9Ws65m+RGIi7mjJK/euCegfn3i7jvqWeWyHe9y3Vgg=="],
+    "playwright-core": ["playwright-core@1.60.0", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-9bW6zvX/m0lEbgTKJ6YppOKx8H3VOPBMOCFh2irXFOT4BbHgrx5hPjwJYLT40Lu+4qtD36qKc/Hn56StUW57IA=="],
 
     "pngjs": ["pngjs@5.0.0", "", {}, "sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw=="],
 

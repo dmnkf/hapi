@@ -7,11 +7,19 @@ import { z } from 'zod'
  */
 export const AGENT_MESSAGE_PAYLOAD_TYPE = 'codex' as const
 
-export const AGENT_FLAVORS = ['claude', 'codex', 'cursor', 'gemini', 'kimi', 'opencode'] as const
+export const AGENT_FLAVORS = ['claude', 'codex', 'cursor', 'gemini', 'kimi', 'opencode', 'pi'] as const
 export type AgentFlavor = typeof AGENT_FLAVORS[number]
 export const AgentFlavorSchema = z.enum(AGENT_FLAVORS)
 
-export const CLAUDE_PERMISSION_MODES = ['default', 'acceptEdits', 'bypassPermissions', 'plan'] as const
+// Flavors offered when CREATING a new session. Gemini CLI is intentionally
+// excluded: Google sunset the consumer Gemini CLI (2026-06-18) so it can no
+// longer be launched. It is kept in AGENT_FLAVORS / AgentFlavorSchema above so
+// existing stored Gemini sessions still validate and remain viewable.
+export const CREATABLE_AGENT_FLAVORS: readonly AgentFlavor[] = AGENT_FLAVORS.filter(
+    (flavor) => flavor !== 'gemini'
+)
+
+export const CLAUDE_PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'bypassPermissions', 'plan'] as const
 export type ClaudePermissionMode = typeof CLAUDE_PERMISSION_MODES[number]
 
 export const CODEX_PERMISSION_MODES = ['default', 'read-only', 'safe-yolo', 'yolo'] as const
@@ -29,15 +37,17 @@ export type KimiPermissionMode = typeof KIMI_PERMISSION_MODES[number]
 export const OPENCODE_PERMISSION_MODES = ['default', 'plan', 'yolo'] as const
 export type OpencodePermissionMode = typeof OPENCODE_PERMISSION_MODES[number]
 
-export const CURSOR_PERMISSION_MODES = ['default', 'plan', 'ask', 'yolo'] as const
+export const CURSOR_PERMISSION_MODES = ['default', 'plan', 'ask', 'debug', 'yolo'] as const
 export type CursorPermissionMode = typeof CURSOR_PERMISSION_MODES[number]
 
 export const PERMISSION_MODES = [
     'default',
     'acceptEdits',
+    'auto',
     'bypassPermissions',
     'plan',
     'ask',
+    'debug',
     'read-only',
     'safe-yolo',
     'yolo'
@@ -48,8 +58,10 @@ export type PermissionMode = typeof PERMISSION_MODES[number]
 export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
     default: 'Default',
     acceptEdits: 'Accept Edits',
+    auto: 'Auto',
     plan: 'Plan Mode',
     ask: 'Ask Mode',
+    debug: 'Debug Mode',
     bypassPermissions: 'Yolo',
     'read-only': 'Read Only',
     'safe-yolo': 'Safe Yolo',
@@ -61,8 +73,10 @@ export type PermissionModeTone = 'neutral' | 'info' | 'warning' | 'danger'
 export const PERMISSION_MODE_TONES: Record<PermissionMode, PermissionModeTone> = {
     default: 'neutral',
     acceptEdits: 'warning',
+    auto: 'warning',
     plan: 'info',
     ask: 'info',
+    debug: 'info',
     bypassPermissions: 'danger',
     'read-only': 'warning',
     'safe-yolo': 'warning',
@@ -112,6 +126,11 @@ export function getPermissionModesForFlavor(flavor?: string | null): readonly Pe
     }
     if (flavor === 'cursor') {
         return CURSOR_PERMISSION_MODES
+    }
+    if (flavor === 'pi') {
+        // Pi RPC mode has no runtime permission switching (always auto-approve);
+        // no permission modes are offered.
+        return []
     }
     return CLAUDE_PERMISSION_MODES
 }

@@ -13,6 +13,20 @@ function normalizeCurrentModel(model?: string | null): string | null {
     return trimmedModel
 }
 
+/** Base id before ACP wire suffix, e.g. `claude-opus-4-8[effort=high]` → `claude-opus-4-8`. */
+function cursorWireBaseId(modelId: string): string {
+    const bracket = modelId.indexOf('[')
+    return bracket === -1 ? modelId : modelId.slice(0, bracket)
+}
+
+function cursorCatalogCoversCurrentModel(options: ModelOption[], currentModel: string): boolean {
+    if (options.some((option) => option.value === currentModel)) {
+        return true
+    }
+    const baseId = cursorWireBaseId(currentModel)
+    return options.some((option) => option.value === baseId)
+}
+
 function withCurrentModelOption(options: ModelOption[], currentModel?: string | null): ModelOption[] {
     const normalizedCurrentModel = normalizeCurrentModel(currentModel)
     if (!normalizedCurrentModel || options.some((option) => option.value === normalizedCurrentModel)) {
@@ -87,6 +101,13 @@ export function getModelOptionsForFlavor(
         return getClaudeModelOptions(currentModel, customOptions)
     }
     if (customOptions && customOptions.length > 0) {
+        if (flavor === 'cursor') {
+            const normalizedCurrent = normalizeCurrentModel(currentModel)
+            if (!normalizedCurrent || cursorCatalogCoversCurrentModel(customOptions, normalizedCurrent)) {
+                return customOptions
+            }
+            return withCurrentModelOption(customOptions, currentModel)
+        }
         return withCurrentModelOption(customOptions, currentModel)
     }
     if (flavor === 'gemini') {
@@ -103,6 +124,14 @@ export function getModelOptionsForFlavor(
     }
     // Kimi has no predefined model list — show just the auto/default option.
     if (flavor === 'kimi') {
+        return withCurrentModelOption([{ value: null, label: 'Default' }], currentModel)
+    }
+    // Pi model list is provided dynamically via piModels prop in SessionChat,
+    // not through this function. Show just the auto/default option here to
+    // prevent falling through to the Claude preset cycler (which would
+    // surface unrelated Claude models and let set-session-config push
+    // `sonnet`/`opus` ids into a Pi session).
+    if (flavor === 'pi') {
         return withCurrentModelOption([{ value: null, label: 'Default' }], currentModel)
     }
     return getClaudeModelOptions(currentModel)
@@ -144,6 +173,11 @@ export function getNextModelForFlavor(
         return normalizeCurrentModel(currentModel)
     }
     if (flavor === 'kimi') {
+        return normalizeCurrentModel(currentModel)
+    }
+    // Pi model list is provided dynamically via piModels prop — pressing
+    // Ctrl/Cmd+M must not fall through to the Claude preset cycler.
+    if (flavor === 'pi') {
         return normalizeCurrentModel(currentModel)
     }
     return getNextClaudeComposerModel(currentModel)
